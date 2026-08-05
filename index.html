@@ -276,6 +276,21 @@
   }
   .empty-state{color:#a39d8f; font-size:14px; padding:30px 0;}
 
+  /* ---------- COUNTRIES ---------- */
+  .country-grid{
+    display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap:16px; margin-top:22px;
+  }
+  .country-card{
+    background:#fff; border:1px solid var(--paper-line); border-radius:10px;
+    padding:22px; text-align:center; cursor:pointer;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .country-card:hover{transform:translateY(-2px); box-shadow:0 6px 18px rgba(27,42,65,0.1);}
+  .country-card .c-flag{font-size:40px; margin-bottom:8px;}
+  .country-card .c-name{font-family:'Fraunces', serif; font-weight:700; font-size:16px;}
+  .country-card .c-count{font-size:12px; color:#8a8172; margin-top:4px; font-family:'JetBrains Mono', monospace;}
+
   /* ---------- TAGS & FILTERING ---------- */
   .tag-filters{display:flex; gap:8px; flex-wrap:wrap; margin:16px 0 4px 0;}
   .tag-chip{
@@ -431,7 +446,7 @@
   <div class="brand">Flavor<span>-E</span></div>
   <div class="nav-item active" id="navHome" onclick="showListView('navHome')">🏠 Home</div>
   <div class="nav-item" id="navMealPlanner" onclick="showMealPlannerView('navMealPlanner')">🏡 Household & Meal Planner</div>
-  <div class="nav-item">🌎 Countries</div>
+  <div class="nav-item" id="navCountries" onclick="showCountriesView('navCountries')">🌎 Countries</div>
   <div class="nav-item">🥩 Proteins</div>
   <div class="nav-item" id="navRecipes" onclick="showListView('navRecipes')">🍝 Recipes</div>
   <div class="nav-item" id="navShopping" onclick="showShoppingView('navShopping')">🛒 Shopping</div>
@@ -442,6 +457,14 @@
 </div>
 
 <div class="main">
+
+  <div id="countriesView" style="display:none;">
+    <h1 class="page-title">Countries</h1>
+    <div class="subtitle">Browse the cookbook by where each dish is from</div>
+    <div id="countryGrid" class="country-grid">
+      <div class="empty-state">Loading…</div>
+    </div>
+  </div>
 
   <div id="recipeListView">
     <h1 class="page-title">Recipes</h1>
@@ -595,7 +618,9 @@
         <span class="stat">recipe_steps</span> + <span class="stat">recipe_videos</span> — for the
         recipe_id shown below.
         <br><br>
-        Every recipe now displays a picture automatically. Clicking the photo lets you replace it with your own finished-dish image. The app uploads it to the <span class="stat">recipe-photos</span> Supabase Storage bucket and saves the permanent URL to <span class="stat">recipes.photo_url</span>.
+        Photo tile uploads a real image in-browser now — click it and try a photo of your own. In the live version
+        it'll push to Supabase Storage and save the URL to <span class="stat">recipes.photo_url</span>, the same
+        pattern as your invoice-files bucket.
       </div>
     </div>
   </div>
@@ -662,85 +687,6 @@ function detectVideoPlatform(url){
   if (/instagram\.com\/(reel|p|tv)\//.test(url)) return { platform: 'instagram' };
   if (extractYouTubeId(url)) return { platform: 'youtube', id: extractYouTubeId(url) };
   return { platform: null };
-}
-
-
-// ---- Recipe image helpers ----
-// Permanent Supabase photo_url always wins. When a recipe has no saved photo,
-// the app searches Wikimedia Commons by the exact dish name and caches the
-// best matching image in this browser. This avoids repeating one generic image.
-function escapeHtml(value=''){
-  return String(value).replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
-}
-
-function recipePlaceholder(recipe){
-  const label = escapeHtml(recipe?.name || 'Recipe');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="650" viewBox="0 0 900 650">
-    <rect width="900" height="650" fill="#E9DCC3"/>
-    <circle cx="450" cy="270" r="135" fill="#F3EAD8" stroke="#B5A888" stroke-width="8"/>
-    <circle cx="450" cy="270" r="90" fill="none" stroke="#D4A017" stroke-width="10" stroke-dasharray="18 14"/>
-    <text x="450" y="500" text-anchor="middle" font-family="Georgia,serif" font-size="42" fill="#1B2A41">${label}</text>
-    <text x="450" y="550" text-anchor="middle" font-family="Arial,sans-serif" font-size="22" fill="#6B6558">Finding a matching dish photo…</text>
-  </svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-
-function recipePhoto(recipe){
-  return recipe?.photo_url || recipePlaceholder(recipe);
-}
-
-function recipeImgTag(recipe, className=''){
-  const src = recipePhoto(recipe);
-  const id = escapeHtml(recipe?.id || '');
-  const name = escapeHtml(recipe?.name || 'Recipe');
-  return `<img ${className ? `class="${className}"` : ''} src="${src}" alt="${name}" loading="lazy" data-recipe-id="${id}" data-recipe-name="${name}" data-has-saved-photo="${recipe?.photo_url ? '1' : '0'}">`;
-}
-
-function photoCacheKey(name){
-  return `flavore_photo_${String(name).toLowerCase().replace(/[^a-z0-9]+/g,'_')}`;
-}
-
-async function findMatchingRecipePhoto(name){
-  const key = photoCacheKey(name);
-  const cached = localStorage.getItem(key);
-  if (cached) return cached;
-
-  // Commons MediaSearch is queried using the exact recipe name first. A second,
-  // broader food query is used only if the first search has no usable photo.
-  const searches = [`${name} dish`, `${name} food`];
-  for (const query of searches){
-    try{
-      const endpoint = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=8&gsrsearch=${encodeURIComponent(query)}&prop=imageinfo&iiprop=url|mime&iiurlwidth=900&format=json&origin=*`;
-      const response = await fetch(endpoint);
-      if (!response.ok) continue;
-      const payload = await response.json();
-      const pages = Object.values(payload?.query?.pages || {});
-      const candidates = pages
-        .map(page => ({ title: page.title || '', info: page.imageinfo?.[0] }))
-        .filter(x => x.info && /^image\/(jpeg|png|webp)$/i.test(x.info.mime || ''))
-        .filter(x => !/(logo|icon|map|diagram|package|raw meat|ingredient)/i.test(x.title));
-      const best = candidates[0]?.info?.thumburl || candidates[0]?.info?.url;
-      if (best){
-        localStorage.setItem(key, best);
-        return best;
-      }
-    }catch(error){
-      console.warn('Recipe photo lookup failed for', name, error);
-    }
-  }
-  return null;
-}
-
-async function hydrateRecipeImages(root=document){
-  const images = [...root.querySelectorAll('img[data-recipe-name][data-has-saved-photo="0"]')];
-  await Promise.all(images.map(async img => {
-    const name = img.dataset.recipeName;
-    const url = await findMatchingRecipePhoto(name);
-    if (url){
-      img.src = url;
-      img.onerror = () => { img.src = recipePlaceholder({name}); };
-    }
-  }));
 }
 
 // ---- Household & portion scaling ----
@@ -955,11 +901,6 @@ function renderRecipe(r){
   document.getElementById('recipeTitle').textContent = r.name;
   currentRecipeId = r.id;
   renderFavoriteButtonOnDetail();
-
-  // Always show a recipe picture. Permanent photo_url wins; otherwise a
-  // stable recipe-specific food image is used until a household photo is saved.
-  const photoTile = document.getElementById('photoTile');
-  photoTile.innerHTML = `${recipeImgTag(r)}<input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
   const flag = r.countries?.flag_emoji ? r.countries.flag_emoji + ' ' : '';
   document.getElementById('recipeSubtitle').textContent = `${flag}${r.countries?.name ?? ''}`;
 
@@ -1047,11 +988,11 @@ function renderRecipe(r){
   document.getElementById('loadingMsg').style.display = 'none';
   document.getElementById('recipeCard').style.display = 'block';
   renderHouseholdSummaryBar();
-  hydrateRecipeImages(document.getElementById('recipeDetailView'));
 }
 
 // ---- View switching ----
 function hideAllViews(){
+  document.getElementById('countriesView').style.display = 'none';
   document.getElementById('recipeListView').style.display = 'none';
   document.getElementById('recipeDetailView').style.display = 'none';
   document.getElementById('mealPlannerView').style.display = 'none';
@@ -1064,6 +1005,7 @@ function showListView(navId){
   hideAllViews();
   document.getElementById('recipeListView').style.display = 'block';
   showFavoritesOnly = false;
+  activeCountryFilter = null;
   loadRecipeList();
 }
 
@@ -1092,6 +1034,52 @@ let allRecipesFullCache = [];
 let activeTagFilters = new Set();
 let favoriteIds = new Set();
 let showFavoritesOnly = false;
+let activeCountryFilter = null;
+
+async function showCountriesView(navId){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if (navId) document.getElementById(navId).classList.add('active');
+  hideAllViews();
+  document.getElementById('countriesView').style.display = 'block';
+
+  const grid = document.getElementById('countryGrid');
+  const { data, error } = await sb
+    .from('recipes')
+    .select('countries(name, flag_emoji)');
+
+  if (error || !data){
+    grid.innerHTML = `<div class="empty-state">Could not load countries.</div>`;
+    return;
+  }
+
+  const counts = {};
+  data.forEach(r => {
+    const name = r.countries?.name;
+    if (!name) return;
+    if (!counts[name]) counts[name] = { name, flag: r.countries.flag_emoji, count: 0 };
+    counts[name].count++;
+  });
+
+  const countries = Object.values(counts).sort((a,b) => b.count - a.count);
+  grid.innerHTML = countries.map(c => `
+    <div class="country-card" onclick="filterByCountry('${c.name}')">
+      <div class="c-flag">${c.flag ?? '🌎'}</div>
+      <div class="c-name">${c.name}</div>
+      <div class="c-count">${c.count} recipe${c.count === 1 ? '' : 's'}</div>
+    </div>
+  `).join('');
+}
+
+function filterByCountry(countryName){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  const navRecipes = document.getElementById('navRecipes');
+  if (navRecipes) navRecipes.classList.add('active');
+  hideAllViews();
+  document.getElementById('recipeListView').style.display = 'block';
+  showFavoritesOnly = false;
+  activeCountryFilter = countryName;
+  loadRecipeList();
+}
 
 function renderFavoriteButtonOnDetail(){
   const btn = document.getElementById('favBtnDetail');
@@ -1152,12 +1140,15 @@ function toggleTagFilter(tag){
 
 function renderRecipeGrid(){
   const grid = document.getElementById('recipeGrid');
-  document.querySelector('#recipeListView .page-title').textContent = showFavoritesOnly ? 'Favorites' : 'Recipes';
+  document.querySelector('#recipeListView .page-title').textContent = showFavoritesOnly
+    ? 'Favorites'
+    : activeCountryFilter ? activeCountryFilter : 'Recipes';
   document.querySelector('#recipeListView .subtitle').textContent = showFavoritesOnly
     ? 'Recipes you have hearted'
-    : 'Everything currently in your Flavor-E database';
+    : activeCountryFilter ? `Recipes from ${activeCountryFilter}` : 'Everything currently in your Flavor-E database';
 
   let filtered = showFavoritesOnly ? allRecipesFullCache.filter(r => favoriteIds.has(r.id)) : allRecipesFullCache;
+  if (activeCountryFilter) filtered = filtered.filter(r => r.countries?.name === activeCountryFilter);
   filtered = activeTagFilters.size === 0
     ? filtered
     : filtered.filter(r => [...activeTagFilters].every(t => (r.tags || []).includes(t)));
@@ -1172,7 +1163,7 @@ function renderRecipeGrid(){
   grid.innerHTML = filtered.map(r => `
     <div class="grid-card" onclick="openRecipe('${r.id}')">
       <button class="fav-btn" onclick="event.stopPropagation(); toggleFavorite('${r.id}')">${favoriteIds.has(r.id) ? '❤️' : '🤍'}</button>
-      <div class="g-photo">${recipeImgTag(r)}</div>
+      <div class="g-photo">${r.photo_url ? `<img src="${r.photo_url}" alt="${r.name}">` : '🍽️'}</div>
       <div class="g-name">${r.name}</div>
       <div class="g-sub">${r.countries?.flag_emoji ?? ''} ${r.countries?.name ?? ''}</div>
       <div class="g-stats">
@@ -1183,7 +1174,6 @@ function renderRecipeGrid(){
       <div class="g-tags">${(r.tags || []).slice(0, 4).map(t => `<span class="g-tag">${t}</span>`).join('')}</div>
     </div>
   `).join('');
-  hydrateRecipeImages(grid);
 }
 
 function openRecipe(id){
@@ -1830,45 +1820,15 @@ renderHousehold();
 // Photo upload — prototype shows it in-browser only (in-memory).
 // Real version uploads to Supabase Storage and saves the returned URL
 // to recipes.photo_url, same pattern as your invoice-files bucket.
-async function handlePhotoUpload(event){
+function handlePhotoUpload(event){
   const file = event.target.files[0];
-  if (!file || !currentRecipeId) return;
-
-  const tile = document.getElementById('photoTile');
-  const previous = tile.innerHTML;
-  const localPreview = URL.createObjectURL(file);
-  tile.innerHTML = `<img src="${localPreview}" alt="Recipe preview"><div class="upload-hint" style="position:absolute;bottom:6px;left:6px;background:rgba(27,42,65,.82);color:#fff;border-radius:4px;padding:4px 7px;">Uploading…</div>`;
-
-  try {
-    const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]+/g, '-');
-    const path = `${currentRecipeId}/${Date.now()}-${safeName}`;
-    const { error: uploadError } = await sb.storage
-      .from('recipe-photos')
-      .upload(path, file, { upsert: true, contentType: file.type });
-    if (uploadError) throw uploadError;
-
-    const { data: publicData } = sb.storage.from('recipe-photos').getPublicUrl(path);
-    const publicUrl = publicData?.publicUrl;
-    if (!publicUrl) throw new Error('No public image URL returned.');
-
-    const { error: updateError } = await sb
-      .from('recipes')
-      .update({ photo_url: publicUrl })
-      .eq('id', currentRecipeId);
-    if (updateError) throw updateError;
-
-    if (currentRecipeData) currentRecipeData.photo_url = publicUrl;
-    allRecipesFullCache = allRecipesFullCache.map(r => r.id === currentRecipeId ? { ...r, photo_url: publicUrl } : r);
-    allRecipesCache = allRecipesCache.map(r => r.id === currentRecipeId ? { ...r, photo_url: publicUrl } : r);
-    tile.innerHTML = `<img src="${publicUrl}" alt="${currentRecipeData?.name || 'Recipe'}"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
-    URL.revokeObjectURL(localPreview);
-  } catch (error) {
-    console.warn('Permanent recipe photo upload failed:', error);
-    // Keep the local preview visible so the feature is still useful in the
-    // prototype, and explain the one-time Supabase setup requirement.
-    tile.innerHTML = `<img src="${localPreview}" alt="Recipe preview"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
-    alert('The picture is showing for this session, but permanent upload needs a public Supabase Storage bucket named “recipe-photos” plus insert/update policies.');
-  }
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const tile = document.getElementById('photoTile');
+    tile.innerHTML = `<img src="${e.target.result}" alt="Kimchi Jjigae"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
+  };
+  reader.readAsDataURL(file);
 }
 
 let currentStep = 0;
