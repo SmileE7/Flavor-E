@@ -247,16 +247,41 @@
     padding:12px 14px; background:var(--parchment-deep); border-radius:8px;
   }
   .scale-toggle-row label{font-size:13.5px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:8px;}
+
+  /* ---------- RECIPE LIST / GRID ---------- */
+  .recipe-grid{
+    display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap:18px; margin-top:22px;
+  }
+  .grid-card{
+    background:#fff; border:1px solid var(--paper-line); border-radius:10px;
+    padding:18px; cursor:pointer; transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .grid-card:hover{transform:translateY(-2px); box-shadow:0 6px 18px rgba(27,42,65,0.1);}
+  .grid-card .g-photo{
+    width:100%; height:110px; border-radius:8px; margin-bottom:12px;
+    background:var(--parchment-deep); display:flex; align-items:center; justify-content:center;
+    font-size:30px; overflow:hidden;
+  }
+  .grid-card .g-photo img{width:100%; height:100%; object-fit:cover;}
+  .grid-card .g-name{font-family:'Fraunces', serif; font-weight:700; font-size:16px; margin:0 0 4px 0;}
+  .grid-card .g-sub{font-size:12px; color:#8a8172; margin-bottom:8px;}
+  .grid-card .g-stats{display:flex; gap:10px; font-size:11px; color:#6b6558;}
+  .back-link{
+    display:inline-block; margin-bottom:16px; color:var(--chili); font-size:13px;
+    font-weight:600; cursor:pointer; text-decoration:none;
+  }
+  .empty-state{color:#a39d8f; font-size:14px; padding:30px 0;}
 </style>
 </head>
 <body>
 
 <div class="sidebar">
   <div class="brand">Flavor<span>-E</span></div>
-  <div class="nav-item active">🏠 Home</div>
+  <div class="nav-item active" id="navHome" onclick="showListView('navHome')">🏠 Home</div>
   <div class="nav-item">🌎 Countries</div>
   <div class="nav-item">🥩 Proteins</div>
-  <div class="nav-item">🍝 Recipes</div>
+  <div class="nav-item" id="navRecipes" onclick="showListView('navRecipes')">🍝 Recipes</div>
   <div class="nav-item">🛒 Shopping</div>
   <div class="nav-item">🥣 Sauces</div>
   <div class="nav-item">📅 Meal Planner</div>
@@ -266,103 +291,115 @@
 </div>
 
 <div class="main">
-  <h1 class="page-title" id="recipeTitle">Loading…</h1>
-  <div class="subtitle" id="recipeSubtitle"></div>
 
-  <div id="loadingMsg" style="color:#8a8172; font-size:13px;">Fetching recipe from Supabase…</div>
-
-  <div class="household-card">
-    <h2>🏡 Household & Portions</h2>
-    <div class="household-sub">
-      Add each person you're cooking for. Kids scale by published USDA age/sex/activity guidelines —
-      not by weight — so a 6-year-old's portion is sized sensibly without anyone guessing or tracking numbers.
-    </div>
-
-    <div id="memberList"></div>
-
-    <div class="member-form">
-      <div>
-        <label>Name</label>
-        <input type="text" id="mName" placeholder="Jonas Jr.">
-      </div>
-      <div>
-        <label>Role</label>
-        <select id="mRole" onchange="toggleAgeField()">
-          <option value="adult">Adult</option>
-          <option value="child">Child</option>
-        </select>
-      </div>
-      <div>
-        <label>Sex</label>
-        <select id="mSex">
-          <option value="male">Male</option>
-          <option value="female">Female</option>
-        </select>
-      </div>
-      <div id="ageField">
-        <label>Age</label>
-        <input type="number" id="mAge" min="2" max="99" placeholder="8">
-      </div>
-      <div>
-        <label>Activity</label>
-        <select id="mActivity">
-          <option value="sedentary">Sedentary</option>
-          <option value="moderate" selected>Moderate</option>
-          <option value="active">Active</option>
-        </select>
-      </div>
-      <button class="btn btn-saffron" style="padding:9px 16px;" onclick="addMember()">+ Add</button>
-    </div>
-
-    <div class="household-totals" id="householdTotals"></div>
-
-    <div class="scale-toggle-row">
-      <label>
-        <input type="checkbox" id="scaleToggle" onchange="onScaleToggle()">
-        Scale this recipe's ingredients for my household
-      </label>
+  <div id="recipeListView">
+    <h1 class="page-title">Recipes</h1>
+    <div class="subtitle">Everything currently in your Flavor-E database</div>
+    <div id="recipeGrid" class="recipe-grid">
+      <div class="empty-state">Loading recipes…</div>
     </div>
   </div>
 
-  <div class="recipe-card" id="recipeCard" style="display:none;">
-    <div class="recipe-header">
-      <div class="recipe-photo" id="photoTile">
-        <div class="upload-hint" id="photoHint">
-          <span class="upload-icon">📷</span>
-          Add your photo
+  <div id="recipeDetailView" style="display:none;">
+    <span class="back-link" onclick="showListView('navRecipes')">← Back to Recipes</span>
+    <h1 class="page-title" id="recipeTitle">Loading…</h1>
+    <div class="subtitle" id="recipeSubtitle"></div>
+
+    <div id="loadingMsg" style="color:#8a8172; font-size:13px;">Fetching recipe from Supabase…</div>
+
+    <div class="household-card">
+      <h2>🏡 Household & Portions</h2>
+      <div class="household-sub">
+        Add each person you're cooking for. Kids scale by published USDA age/sex/activity guidelines —
+        not by weight — so a 6-year-old's portion is sized sensibly without anyone guessing or tracking numbers.
+      </div>
+
+      <div id="memberList"></div>
+
+      <div class="member-form">
+        <div>
+          <label>Name</label>
+          <input type="text" id="mName" placeholder="Jonas Jr.">
         </div>
-        <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
+        <div>
+          <label>Role</label>
+          <select id="mRole" onchange="toggleAgeField()">
+            <option value="adult">Adult</option>
+            <option value="child">Child</option>
+          </select>
+        </div>
+        <div>
+          <label>Sex</label>
+          <select id="mSex">
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+        </div>
+        <div id="ageField">
+          <label>Age</label>
+          <input type="number" id="mAge" min="2" max="99" placeholder="8">
+        </div>
+        <div>
+          <label>Activity</label>
+          <select id="mActivity">
+            <option value="sedentary">Sedentary</option>
+            <option value="moderate" selected>Moderate</option>
+            <option value="active">Active</option>
+          </select>
+        </div>
+        <button class="btn btn-saffron" style="padding:9px 16px;" onclick="addMember()">+ Add</button>
       </div>
-      <div>
-        <div class="recipe-meta" id="recipeMeta"></div>
+
+      <div class="household-totals" id="householdTotals"></div>
+
+      <div class="scale-toggle-row">
+        <label>
+          <input type="checkbox" id="scaleToggle" onchange="onScaleToggle()">
+          Scale this recipe's ingredients for my household
+        </label>
       </div>
     </div>
 
-    <div class="section-label">Equipment</div>
-    <div class="equip-toggle" id="equipToggle"></div>
+    <div class="recipe-card" id="recipeCard" style="display:none;">
+      <div class="recipe-header">
+        <div class="recipe-photo" id="photoTile">
+          <div class="upload-hint" id="photoHint">
+            <span class="upload-icon">📷</span>
+            Add your photo
+          </div>
+          <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
+        </div>
+        <div>
+          <div class="recipe-meta" id="recipeMeta"></div>
+        </div>
+      </div>
 
-    <div class="section-label">Ingredients</div>
-    <div id="ingredientGroups"></div>
+      <div class="section-label">Equipment</div>
+      <div class="equip-toggle" id="equipToggle"></div>
 
-    <button class="start-btn" onclick="startCookMode()">▶ Start Guided Cooking</button>
+      <div class="section-label">Ingredients</div>
+      <div id="ingredientGroups"></div>
 
-    <div id="cookMode" style="display:none;"></div>
+      <button class="start-btn" onclick="startCookMode()">▶ Start Guided Cooking</button>
 
-    <div class="section-label">Visual Learning</div>
-    <div class="video-list" id="videoList"></div>
+      <div id="cookMode" style="display:none;"></div>
 
-    <div class="note-box">
-      Live data: this card now renders entirely from Supabase — <span class="stat">recipes</span> +
-      <span class="stat">recipe_ingredients</span> + <span class="stat">recipe_equipment</span> +
-      <span class="stat">recipe_steps</span> + <span class="stat">recipe_videos</span> — for the
-      recipe_id shown below. Adding meatballs or soy-garlic chicken now just means inserting new
-      rows with a seed script like the one used for this recipe; the page code doesn't change.
-      <br><br>
-      Photo tile uploads a real image in-browser now — click it and try a photo of your own. In the live version
-      it'll push to Supabase Storage and save the URL to <span class="stat">recipes.photo_url</span>, the same
-      pattern as your invoice-files bucket.
+      <div class="section-label">Visual Learning</div>
+      <div class="video-list" id="videoList"></div>
+
+      <div class="note-box">
+        Live data: this card renders entirely from Supabase — <span class="stat">recipes</span> +
+        <span class="stat">recipe_ingredients</span> + <span class="stat">recipe_equipment</span> +
+        <span class="stat">recipe_steps</span> + <span class="stat">recipe_videos</span> — for the
+        recipe_id shown below.
+        <br><br>
+        Photo tile uploads a real image in-browser now — click it and try a photo of your own. In the live version
+        it'll push to Supabase Storage and save the URL to <span class="stat">recipes.photo_url</span>, the same
+        pattern as your invoice-files bucket.
+      </div>
     </div>
   </div>
+
 </div>
 
 <script>
@@ -562,7 +599,11 @@ function renderIngredients(){
 }
 
 
-async function loadRecipe(name){
+async function loadRecipeById(id){
+  document.getElementById('loadingMsg').style.display = 'block';
+  document.getElementById('loadingMsg').textContent = 'Fetching recipe from Supabase…';
+  document.getElementById('recipeCard').style.display = 'none';
+
   const { data, error } = await sb
     .from('recipes')
     .select(`
@@ -573,15 +614,18 @@ async function loadRecipe(name){
       recipe_steps(*),
       recipe_videos(*)
     `)
-    .eq('name', name)
+    .eq('id', id)
     .single();
 
   if (error || !data){
-    document.getElementById('loadingMsg').textContent =
-      'Couldn\u2019t load "' + name + '" from Supabase. Run seed_kimchi_jjigae.sql in the SQL Editor if you haven\u2019t yet.';
+    document.getElementById('loadingMsg').textContent = 'Couldn\u2019t load this recipe from Supabase.';
     console.error('Flavor-E load error:', error);
     return;
   }
+
+  scaleEnabled = false;
+  const toggle = document.getElementById('scaleToggle');
+  if (toggle) toggle.checked = false;
 
   renderRecipe(data);
 }
@@ -658,7 +702,56 @@ function renderRecipe(r){
   document.getElementById('recipeCard').style.display = 'block';
 }
 
-loadRecipe('Kimchi Jjigae');
+// ---- View switching ----
+function showListView(navId){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if (navId) document.getElementById(navId).classList.add('active');
+  document.getElementById('recipeListView').style.display = 'block';
+  document.getElementById('recipeDetailView').style.display = 'none';
+  loadRecipeList();
+}
+
+function showDetailView(){
+  document.getElementById('recipeListView').style.display = 'none';
+  document.getElementById('recipeDetailView').style.display = 'block';
+}
+
+async function loadRecipeList(){
+  const grid = document.getElementById('recipeGrid');
+  const { data, error } = await sb
+    .from('recipes')
+    .select('id, name, photo_url, difficulty, cost_per_serving, prep_minutes, cook_minutes, countries(name, flag_emoji)')
+    .order('name');
+
+  if (error){
+    grid.innerHTML = `<div class="empty-state">Could not load recipes — ${error.message}</div>`;
+    return;
+  }
+  if (!data || data.length === 0){
+    grid.innerHTML = `<div class="empty-state">No recipes yet. Run a seed script in the SQL Editor to add your first one.</div>`;
+    return;
+  }
+
+  grid.innerHTML = data.map(r => `
+    <div class="grid-card" onclick="openRecipe('${r.id}')">
+      <div class="g-photo">${r.photo_url ? `<img src="${r.photo_url}" alt="${r.name}">` : '🍽️'}</div>
+      <div class="g-name">${r.name}</div>
+      <div class="g-sub">${r.countries?.flag_emoji ?? ''} ${r.countries?.name ?? ''}</div>
+      <div class="g-stats">
+        <span>${starRating(r.difficulty)}</span>
+        <span>$${Number(r.cost_per_serving ?? 0).toFixed(2)}</span>
+        <span>${(r.prep_minutes ?? 0) + (r.cook_minutes ?? 0)} min</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openRecipe(id){
+  showDetailView();
+  loadRecipeById(id);
+}
+
+showListView('navHome');
 loadNutritionGuidelines();
 renderHousehold();
 
