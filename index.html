@@ -220,10 +220,12 @@
 </div>
 
 <div class="main">
-  <h1 class="page-title">Kimchi Jjigae</h1>
-  <div class="subtitle">🇰🇷 Korea · Traditional · Soups</div>
+  <h1 class="page-title" id="recipeTitle">Loading…</h1>
+  <div class="subtitle" id="recipeSubtitle"></div>
 
-  <div class="recipe-card">
+  <div id="loadingMsg" style="color:#8a8172; font-size:13px;">Fetching recipe from Supabase…</div>
+
+  <div class="recipe-card" id="recipeCard" style="display:none;">
     <div class="recipe-header">
       <div class="recipe-photo" id="photoTile">
         <div class="upload-hint" id="photoHint">
@@ -233,64 +235,29 @@
         <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
       </div>
       <div>
-        <div class="recipe-meta">
-          <div class="meta-block">Difficulty<span class="stat">★★☆☆☆</span></div>
-          <div class="meta-block">Protein<span class="stat">34g</span></div>
-          <div class="meta-block">Cost/serving<span class="stat">$3.12</span></div>
-          <div class="meta-block">Prep<span class="stat">10 min</span></div>
-          <div class="meta-block">Cook<span class="stat">35 min</span></div>
-          <div class="meta-block">Calories<span class="stat">410</span></div>
-        </div>
+        <div class="recipe-meta" id="recipeMeta"></div>
       </div>
     </div>
 
     <div class="section-label">Equipment</div>
-    <div class="equip-toggle" id="equipToggle">
-      <button class="equip-pill active" data-equip="Stovetop">Stovetop</button>
-      <button class="equip-pill" data-equip="Instant Pot">Instant Pot</button>
-      <button class="equip-pill" data-equip="Slow Cooker">Slow Cooker</button>
-    </div>
+    <div class="equip-toggle" id="equipToggle"></div>
 
     <div class="section-label">Ingredients</div>
-    <div class="ingredient-group">
-      <h4>Protein</h4>
-      <div class="ingredient-row"><input type="checkbox"><span>Pork belly</span><span class="amount">1/2 lb</span></div>
-    </div>
-    <div class="ingredient-group">
-      <h4>Base</h4>
-      <div class="ingredient-row"><input type="checkbox"><span>Kimchi, fermented</span><span class="amount">2 cups</span></div>
-      <div class="ingredient-row"><input type="checkbox"><span>Onion</span><span class="amount">1/2, sliced</span></div>
-      <div class="ingredient-row"><input type="checkbox"><span>Garlic</span><span class="amount">3 cloves</span></div>
-      <div class="ingredient-row"><input type="checkbox"><span>Tofu, firm</span><span class="amount">1/2 block</span></div>
-      <div class="ingredient-row"><input type="checkbox"><span>Green onion</span><span class="amount">2 stalks</span></div>
-    </div>
-    <div class="ingredient-group">
-      <h4>Sauce</h4>
-      <div class="ingredient-row"><input type="checkbox"><span>Gochujang</span><span class="amount">1 tbsp</span></div>
-      <div class="ingredient-row"><input type="checkbox"><span>Gochugaru</span><span class="amount">1 tbsp</span></div>
-      <div class="ingredient-row"><input type="checkbox"><span>Broth (anchovy or veg)</span><span class="amount">2 cups</span></div>
-    </div>
-    <div class="ingredient-group">
-      <h4>Optional substitutions</h4>
-      <div class="ingredient-row"><input type="checkbox"><span>Spam, sliced <em>(instead of pork belly)</em></span><span class="amount">1/2 can</span></div>
-    </div>
+    <div id="ingredientGroups"></div>
 
     <button class="start-btn" onclick="startCookMode()">▶ Start Guided Cooking</button>
 
     <div id="cookMode" style="display:none;"></div>
 
     <div class="section-label">Visual Learning</div>
-    <div class="video-list">
-      <div class="video-row"><span><span class="video-label">Best Overall</span><a class="video-link" href="#" target="_blank">Maangchi's Kimchi Jjigae</a></span></div>
-      <div class="video-row"><span><span class="video-label">Quick Guide</span><a class="video-link" href="#" target="_blank">5-min stovetop version</a></span></div>
-      <div class="video-row"><span><span class="video-label">Technique Only</span><a class="video-link" href="#" target="_blank">How to tell kimchi is ripe enough</a></span></div>
-    </div>
+    <div class="video-list" id="videoList"></div>
 
     <div class="note-box">
-      Prototype note: this recipe is hard-coded as the working template. Once the schema is live in Supabase,
-      this card renders from <span class="stat">recipes</span> + <span class="stat">recipe_ingredients</span> +
-      <span class="stat">recipe_steps</span> + <span class="stat">recipe_videos</span> for any recipe_id —
-      meatballs and soy-garlic chicken slot into the exact same layout next.
+      Live data: this card now renders entirely from Supabase — <span class="stat">recipes</span> +
+      <span class="stat">recipe_ingredients</span> + <span class="stat">recipe_equipment</span> +
+      <span class="stat">recipe_steps</span> + <span class="stat">recipe_videos</span> — for the
+      recipe_id shown below. Adding meatballs or soy-garlic chicken now just means inserting new
+      rows with a seed script like the one used for this recipe; the page code doesn't change.
       <br><br>
       Photo tile uploads a real image in-browser now — click it and try a photo of your own. In the live version
       it'll push to Supabase Storage and save the URL to <span class="stat">recipes.photo_url</span>, the same
@@ -306,8 +273,7 @@ const SUPABASE_KEY = 'sb_publishable_eqhZoIjHCCgVpYsMJuZ6rg_YKCOAE16';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Quick connection check — confirms the schema has been run and the
-// browser can actually reach the recipes table. Logs to console only,
-// doesn't block the hard-coded prototype below from rendering.
+// browser can actually reach the recipes table.
 (async () => {
   const { count, error } = await sb.from('recipes').select('*', { count: 'exact', head: true });
   if (error) {
@@ -317,6 +283,135 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log(`Flavor-E: connected. ${count ?? 0} recipe(s) in the database.`);
   }
 })();
+
+// ---- Live recipe fetch + render ----
+const GROUP_ORDER = ['Protein','Base','Marinade','Sauce','Vegetables','Garnish','Optional'];
+const FRACTIONS = {0.25:'1/4', 0.33:'1/3', 0.5:'1/2', 0.67:'2/3', 0.75:'3/4'};
+
+let stepsByEquip = {};
+let activeEquip = null;
+
+function fmtAmount(ri){
+  if (ri.amount == null) return '';
+  const amt = FRACTIONS[ri.amount] ?? String(ri.amount);
+  return ri.unit ? `${amt} ${ri.unit}` : amt;
+}
+
+function starRating(difficulty){
+  const d = difficulty || 0;
+  return '★'.repeat(d) + '☆'.repeat(5 - d);
+}
+
+async function loadRecipe(name){
+  const { data, error } = await sb
+    .from('recipes')
+    .select(`
+      *,
+      countries(name, flag_emoji),
+      recipe_ingredients(*, ingredients(canonical_name)),
+      recipe_equipment(*),
+      recipe_steps(*),
+      recipe_videos(*)
+    `)
+    .eq('name', name)
+    .single();
+
+  if (error || !data){
+    document.getElementById('loadingMsg').textContent =
+      'Couldn\u2019t load "' + name + '" from Supabase. Run seed_kimchi_jjigae.sql in the SQL Editor if you haven\u2019t yet.';
+    console.error('Flavor-E load error:', error);
+    return;
+  }
+
+  renderRecipe(data);
+}
+
+function renderRecipe(r){
+  document.getElementById('recipeTitle').textContent = r.name;
+  const flag = r.countries?.flag_emoji ? r.countries.flag_emoji + ' ' : '';
+  document.getElementById('recipeSubtitle').textContent = `${flag}${r.countries?.name ?? ''}`;
+
+  document.getElementById('recipeMeta').innerHTML = `
+    <div class="meta-block">Difficulty<span class="stat">${starRating(r.difficulty)}</span></div>
+    <div class="meta-block">Protein<span class="stat">${r.protein_grams ?? '—'}g</span></div>
+    <div class="meta-block">Cost/serving<span class="stat">$${Number(r.cost_per_serving ?? 0).toFixed(2)}</span></div>
+    <div class="meta-block">Prep<span class="stat">${r.prep_minutes ?? '—'} min</span></div>
+    <div class="meta-block">Cook<span class="stat">${r.cook_minutes ?? '—'} min</span></div>
+    <div class="meta-block">Calories<span class="stat">${r.calories ?? '—'}</span></div>
+    ${r.is_healthy ? '<span class="healthy-tag">Healthy</span>' : ''}
+  `;
+
+  // ---- Equipment toggle ----
+  const equipList = r.recipe_equipment || [];
+  document.getElementById('equipToggle').innerHTML = equipList.map((e, i) => `
+    <button class="equip-pill${i===0 ? ' active' : ''}" data-equip="${e.equipment}">${e.equipment}</button>
+  `).join('');
+  activeEquip = equipList[0]?.equipment ?? null;
+  document.querySelectorAll('.equip-pill').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.equip-pill').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      activeEquip = btn.dataset.equip;
+    });
+  });
+
+  // ---- Ingredients, grouped ----
+  const byGroup = {};
+  (r.recipe_ingredients || []).forEach(ri=>{
+    const g = ri.group_label || 'Other';
+    (byGroup[g] = byGroup[g] || []).push(ri);
+  });
+  const groupsInOrder = [...GROUP_ORDER.filter(g=>byGroup[g]), ...Object.keys(byGroup).filter(g=>!GROUP_ORDER.includes(g))];
+  document.getElementById('ingredientGroups').innerHTML = groupsInOrder.map(g=>`
+    <div class="ingredient-group">
+      <h4>${g === 'Optional' ? 'Optional substitutions' : g}</h4>
+      ${byGroup[g].map(ri=>`
+        <div class="ingredient-row">
+          <input type="checkbox">
+          <span>${ri.ingredients?.canonical_name ?? '?'}${ri.substitution_note ? ` <em>(${ri.substitution_note})</em>` : ''}</span>
+          <span class="amount">${fmtAmount(ri)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+  document.querySelectorAll('.ingredient-row input[type=checkbox]').forEach(cb=>{
+    cb.addEventListener('change', e=>{
+      e.target.closest('.ingredient-row').classList.toggle('checked', e.target.checked);
+    });
+  });
+
+  // ---- Steps, grouped by equipment ----
+  const equipNameById = {};
+  equipList.forEach(e=>{ equipNameById[e.id] = e.equipment; });
+  stepsByEquip = {};
+  (r.recipe_steps || [])
+    .sort((a,b)=>a.step_number - b.step_number)
+    .forEach(s=>{
+      const equipName = equipNameById[s.equipment_id] ?? equipList[0]?.equipment;
+      (stepsByEquip[equipName] = stepsByEquip[equipName] || []).push({
+        title: s.title,
+        instruction: s.instruction,
+        minutes: s.estimated_minutes,
+        timer: s.timer_seconds,
+        equipment_needed: s.equipment_needed,
+        safety: s.safety_note,
+        mistake: s.common_mistakes
+      });
+    });
+
+  // ---- Videos ----
+  document.getElementById('videoList').innerHTML = (r.recipe_videos || []).map(v=>`
+    <div class="video-row">
+      <span><span class="video-label">${v.label}</span>
+      <a class="video-link" href="${v.url}" target="_blank">${v.label}</a></span>
+    </div>
+  `).join('');
+
+  document.getElementById('loadingMsg').style.display = 'none';
+  document.getElementById('recipeCard').style.display = 'block';
+}
+
+loadRecipe('Kimchi Jjigae');
 
 // Photo upload — prototype shows it in-browser only (in-memory).
 // Real version uploads to Supabase Storage and saves the returned URL
@@ -331,46 +426,6 @@ function handlePhotoUpload(event){
   };
   reader.readAsDataURL(file);
 }
-
-// Ingredient checklist toggle
-document.querySelectorAll('.ingredient-row input[type=checkbox]').forEach(cb=>{
-  cb.addEventListener('change', e=>{
-    e.target.closest('.ingredient-row').classList.toggle('checked', e.target.checked);
-  });
-});
-
-// Equipment toggle -> swaps which step set is active
-let activeEquip = 'Stovetop';
-document.querySelectorAll('.equip-pill').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.equip-pill').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    activeEquip = btn.dataset.equip;
-  });
-});
-
-// ---- STEP DATA (equipment-aware: shared array per equipment, matches recipe_steps table shape) ----
-const stepsByEquip = {
-  'Stovetop': [
-    {title:'Brown the pork', instruction:'Trim excess fat and pat pork belly dry. Brown in a dry pot over medium-high heat until edges crisp.', minutes:5, timer:300, equipment_needed:'Heavy-bottomed pot', safety:'Watch for oil splatter — keep a lid nearby.'},
-    {title:'Build the base', instruction:'Add onion and garlic, cook until fragrant. Stir in gochujang and gochugaru, toast for 30 seconds.', minutes:3, timer:180, equipment_needed:null, safety:null},
-    {title:'Add kimchi', instruction:'Add kimchi and its juices. Cook for 5 minutes to deepen the flavor before adding liquid.', minutes:5, timer:300, equipment_needed:null, safety:null, mistake:'Don\u2019t skip this — under-cooked kimchi tastes flat.'},
-    {title:'Simmer', instruction:'Pour in broth, bring to a boil, then reduce to a simmer for 15 minutes.', minutes:15, timer:900, equipment_needed:null, safety:null},
-    {title:'Add tofu and finish', instruction:'Gently add tofu cubes and green onion. Simmer 5 more minutes without stirring hard, so the tofu holds together.', minutes:5, timer:300, equipment_needed:null, safety:null}
-  ],
-  'Instant Pot': [
-    {title:'Saut\u00e9 the pork', instruction:'Use Saut\u00e9 mode. Brown pork belly directly in the pot.', minutes:5, timer:300, equipment_needed:'Instant Pot', safety:null},
-    {title:'Build the base', instruction:'Add onion, garlic, gochujang, gochugaru. Saut\u00e9 30 seconds.', minutes:2, timer:120, equipment_needed:null, safety:null},
-    {title:'Add kimchi + broth', instruction:'Add kimchi and broth. Seal lid, pressure cook on High for 8 minutes.', minutes:8, timer:480, equipment_needed:null, safety:'Use quick release carefully — steam is hot.'},
-    {title:'Finish', instruction:'Open lid, switch to Saut\u00e9, add tofu and green onion, simmer uncovered 3 minutes.', minutes:3, timer:180, equipment_needed:null, safety:null}
-  ],
-  'Slow Cooker': [
-    {title:'Brown the pork (stovetop first)', instruction:'Brown pork in a pan, then transfer to the slow cooker.', minutes:5, timer:300, equipment_needed:'Pan + slow cooker', safety:null},
-    {title:'Combine', instruction:'Add kimchi, onion, garlic, gochujang, gochugaru, and broth. Stir once.', minutes:3, timer:null, equipment_needed:null, safety:null},
-    {title:'Cook low and slow', instruction:'Cover and cook on Low for 5 hours.', minutes:300, timer:18000, equipment_needed:null, safety:null},
-    {title:'Add tofu', instruction:'Stir in tofu and green onion, cook 15 more minutes on Low.', minutes:15, timer:900, equipment_needed:null, safety:null}
-  ]
-};
 
 let currentStep = 0;
 let timerInterval = null;
