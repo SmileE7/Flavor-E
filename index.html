@@ -1269,21 +1269,58 @@ async function findStoresByZip(){
 
 async function computeAndRenderStores(latitude, longitude){
   const results = document.getElementById('storeResults');
+  results.innerHTML = `<div class="empty-state">Finding stores near you…</div>`;
 
   if (storesCache.length === 0){
-    const { data, error } = await sb.from('stores').select('*');
-    if (error || !data || data.length === 0){
-      results.innerHTML = `<div class="empty-state">No stores in your database yet — run seed_stores.sql in the SQL Editor.</div>`;
-      return;
-    }
-    storesCache = data;
+    const { data } = await sb.from('stores').select('*');
+    storesCache = data || [];
   }
 
-  lastStoreResults = storesCache
+  const curated = storesCache
     .filter(s => s.lat != null && s.lng != null)
-    .map(s => ({ ...s, distance: haversineMiles(latitude, longitude, s.lat, s.lng) }))
-    .sort((a, b) => a.distance - b.distance);
+    .map(s => ({ ...s, distance: haversineMiles(latitude, longitude, s.lat, s.lng), source: 'curated' }));
 
+  // Supplement with live, nationwide data from OpenStreetMap's free Overpass API —
+  // no key required, unlike Google Places. Community-maintained, so coverage and
+  // detail varies by area, but it's genuinely national rather than limited to
+  // whatever a handful of cities I've manually looked up.
+  let osmStores = [];
+  try {
+    const radiusMeters = 15000; // ~9.3 miles
+    const query = `[out:json][timeout:20];nwr["shop"="supermarket"](around:${radiusMeters},${latitude},${longitude});out center;`;
+    const resp = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+    if (resp.ok){
+      const data = await resp.json();
+      osmStores = (data.elements || [])
+        .map(el => {
+          const lat = el.lat ?? el.center?.lat;
+          const lng = el.lon ?? el.center?.lon;
+          if (lat == null || lng == null || !el.tags?.name) return null;
+          const addrParts = [el.tags['addr:housenumber'], el.tags['addr:street'], el.tags['addr:city']].filter(Boolean);
+          return {
+            id: `osm-${el.id}`,
+            name: el.tags.name,
+            address: addrParts.length ? addrParts.join(' ') : 'Address not listed in OpenStreetMap',
+            lat, lng,
+            store_type: 'general',
+            distance: haversineMiles(latitude, longitude, lat, lng),
+            source: 'osm'
+          };
+        })
+        .filter(Boolean);
+    }
+  } catch (e){
+    console.warn('Flavor-E: OpenStreetMap lookup failed —', e.message);
+  }
+
+  // Dedup: skip OSM results basically on top of a curated store we already have
+  const merged = [...curated];
+  osmStores.forEach(o => {
+    const dupe = curated.some(c => haversineMiles(o.lat, o.lng, c.lat, c.lng) < 0.1);
+    if (!dupe) merged.push(o);
+  });
+
+  lastStoreResults = merged.sort((a, b) => a.distance - b.distance).slice(0, 15);
   renderStoreRows();
 }
 
@@ -1304,7 +1341,7 @@ function renderStoreRows(){
   results.innerHTML = toggle + sorted.map(s => `
     <div class="store-row ${s.id === selectedStoreId ? 'selected' : ''}" onclick="selectStore('${s.id}')">
       <div>
-        <div class="s-name">${s.name}</div>
+        <div class="s-name">${s.name}${s.source === 'osm' ? ' <span style="font-weight:400; font-size:10px; color:#8a8172;">(via OpenStreetMap)</span>' : ''}</div>
         <div class="s-addr">${s.address ?? ''}</div>
         ${s.rating ? `<div class="s-rating">★ ${s.rating} (${(s.rating_count ?? 0).toLocaleString()} reviews)</div>` : ''}
       </div>
