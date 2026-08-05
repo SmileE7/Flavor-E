@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,700;1,600&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   :root{
     --ink:#1B2A41;
@@ -273,6 +274,19 @@
   }
   .empty-state{color:#a39d8f; font-size:14px; padding:30px 0;}
 
+  /* ---------- TAGS & FILTERING ---------- */
+  .tag-filters{display:flex; gap:8px; flex-wrap:wrap; margin:16px 0 4px 0;}
+  .tag-chip{
+    padding:6px 13px; border-radius:16px; border:1.5px solid var(--ink);
+    font-size:12px; font-weight:600; cursor:pointer; background:transparent; color:var(--ink);
+  }
+  .tag-chip.active{background:var(--ink); color:var(--parchment);}
+  .grid-card .g-tags{display:flex; gap:5px; flex-wrap:wrap; margin-top:8px;}
+  .g-tag{
+    font-size:10px; background:var(--parchment-deep); color:#8a8172;
+    padding:2px 8px; border-radius:10px; font-family:'JetBrains Mono', monospace;
+  }
+
   /* ---------- HOUSEHOLD SUMMARY BAR (compact, on recipe pages) ---------- */
   .household-summary-bar{
     display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;
@@ -362,6 +376,31 @@
     width:70px; padding:5px 7px; border:1px solid var(--paper-line); border-radius:5px;
     font-family:'JetBrains Mono', monospace; font-size:13px; background:var(--parchment); margin-left:auto;
   }
+  .scan-btn{
+    display:inline-flex; align-items:center; gap:8px; background:var(--sage); color:#fff;
+    border:none; border-radius:8px; padding:9px 16px; font-weight:600; font-size:13px;
+    cursor:pointer; margin-bottom:12px; position:relative; overflow:hidden;
+  }
+  .scan-btn input[type=file]{
+    position:absolute; inset:0; opacity:0; cursor:pointer;
+  }
+  .scan-status{font-size:12.5px; color:#8a8172; margin-bottom:10px;}
+  .receipt-review{
+    background:var(--parchment-deep); border-radius:8px; padding:14px; margin-bottom:14px;
+  }
+  .receipt-review h4{font-family:'Fraunces', serif; font-size:14px; margin:0 0 8px 0;}
+  .receipt-line{
+    display:flex; align-items:center; gap:8px; padding:5px 0; font-size:12.5px;
+    border-bottom:1px dashed #d8c9a8;
+  }
+  .receipt-line select{
+    flex:1; padding:4px 6px; border-radius:5px; border:1px solid var(--paper-line);
+    font-size:12px; background:#fff;
+  }
+  .receipt-line .r-price{
+    font-family:'JetBrains Mono', monospace; font-weight:700; color:var(--chili); width:55px; text-align:right;
+  }
+  .receipt-date{font-size:12px; color:#8a8172; margin-bottom:10px;}
   .store-row .s-rating{font-size:11.5px; color:#8a8172; margin-top:2px;}
   .sort-toggle{display:flex; gap:8px; margin-bottom:14px;}
   .sort-toggle button{
@@ -392,6 +431,7 @@
   <div id="recipeListView">
     <h1 class="page-title">Recipes</h1>
     <div class="subtitle">Everything currently in your Flavor-E database</div>
+    <div id="tagFilters" class="tag-filters"></div>
     <div id="recipeGrid" class="recipe-grid">
       <div class="empty-state">Loading recipes…</div>
     </div>
@@ -474,6 +514,11 @@
       <div class="shopping-card">
         <h2>📍 Nearest Store</h2>
         <button class="locate-btn" onclick="findNearestStores()">Use my location</button>
+        <div style="display:flex; gap:8px; margin-bottom:16px;">
+          <input type="text" id="zipInput" placeholder="Or enter ZIP code" maxlength="5"
+                 style="flex:1; padding:9px 10px; border:1px solid var(--paper-line); border-radius:6px; font-size:13px; font-family:'Work Sans',sans-serif;">
+          <button class="locate-btn" style="margin-bottom:0;" onclick="findStoresByZip()">Search</button>
+        </div>
         <div id="storeResults" style="font-size:13px; color:#8a8172;">
           Click above to find the closest store from your current location.
         </div>
@@ -909,11 +954,14 @@ function showDetailView(){
   document.getElementById('recipeDetailView').style.display = 'block';
 }
 
+let allRecipesFullCache = [];
+let activeTagFilters = new Set();
+
 async function loadRecipeList(){
   const grid = document.getElementById('recipeGrid');
   const { data, error } = await sb
     .from('recipes')
-    .select('id, name, photo_url, difficulty, cost_per_serving, prep_minutes, cook_minutes, countries(name, flag_emoji)')
+    .select('id, name, photo_url, difficulty, cost_per_serving, prep_minutes, cook_minutes, tags, countries(name, flag_emoji)')
     .order('name');
 
   if (error){
@@ -926,8 +974,34 @@ async function loadRecipeList(){
   }
 
   allRecipesCache = data;
+  allRecipesFullCache = data;
 
-  grid.innerHTML = data.map(r => `
+  const allTags = [...new Set(data.flatMap(r => r.tags || []))].sort();
+  document.getElementById('tagFilters').innerHTML = allTags.map(tag => `
+    <button class="tag-chip ${activeTagFilters.has(tag) ? 'active' : ''}" onclick="toggleTagFilter('${tag}')">${tag}</button>
+  `).join('');
+
+  renderRecipeGrid();
+}
+
+function toggleTagFilter(tag){
+  if (activeTagFilters.has(tag)) activeTagFilters.delete(tag);
+  else activeTagFilters.add(tag);
+  loadRecipeList(); // cheap re-fetch keeps chip state + grid in sync; dataset is small
+}
+
+function renderRecipeGrid(){
+  const grid = document.getElementById('recipeGrid');
+  const filtered = activeTagFilters.size === 0
+    ? allRecipesFullCache
+    : allRecipesFullCache.filter(r => [...activeTagFilters].every(t => (r.tags || []).includes(t)));
+
+  if (filtered.length === 0){
+    grid.innerHTML = `<div class="empty-state">No recipes match those filters.</div>`;
+    return;
+  }
+
+  grid.innerHTML = filtered.map(r => `
     <div class="grid-card" onclick="openRecipe('${r.id}')">
       <div class="g-photo">${r.photo_url ? `<img src="${r.photo_url}" alt="${r.name}">` : '🍽️'}</div>
       <div class="g-name">${r.name}</div>
@@ -937,6 +1011,7 @@ async function loadRecipeList(){
         <span>$${Number(r.cost_per_serving ?? 0).toFixed(2)}</span>
         <span>${(r.prep_minutes ?? 0) + (r.cook_minutes ?? 0)} min</span>
       </div>
+      <div class="g-tags">${(r.tags || []).slice(0, 4).map(t => `<span class="g-tag">${t}</span>`).join('')}</div>
     </div>
   `).join('');
 }
@@ -1136,6 +1211,13 @@ function toggleShoppingItem(key){
 // ---- Nearest store finder (real geolocation, no API key needed) ----
 let storesCache = [];
 let storeSortMode = 'distance';
+let specialtyIngredientNames = new Set();
+
+async function loadSpecialtyIngredients(){
+  if (specialtyIngredientNames.size > 0) return;
+  const { data } = await sb.from('ingredients').select('canonical_name').eq('is_specialty', true);
+  (data || []).forEach(i => specialtyIngredientNames.add(i.canonical_name));
+}
 
 function haversineMiles(lat1, lng1, lat2, lng2){
   const R = 3958.8; // Earth radius in miles
@@ -1149,34 +1231,60 @@ async function findNearestStores(){
   const results = document.getElementById('storeResults');
 
   if (!('geolocation' in navigator)){
-    results.innerHTML = `<div class="empty-state">Your browser doesn't support location — try a different browser.</div>`;
+    results.innerHTML = `<div class="empty-state">Your browser doesn't support location — try a ZIP code instead.</div>`;
     return;
   }
 
   results.innerHTML = `<div class="empty-state">Getting your location…</div>`;
 
   navigator.geolocation.getCurrentPosition(async (pos) => {
-    const { latitude, longitude } = pos.coords;
-
-    if (storesCache.length === 0){
-      const { data, error } = await sb.from('stores').select('*');
-      if (error || !data || data.length === 0){
-        results.innerHTML = `<div class="empty-state">No stores in your database yet — run seed_stores.sql in the SQL Editor.</div>`;
-        return;
-      }
-      storesCache = data;
-    }
-
-    const withDistance = storesCache
-      .filter(s => s.lat != null && s.lng != null)
-      .map(s => ({ ...s, distance: haversineMiles(latitude, longitude, s.lat, s.lng) }))
-      .sort((a, b) => a.distance - b.distance);
-
-    lastStoreResults = withDistance;
-    renderStoreRows();
+    await computeAndRenderStores(pos.coords.latitude, pos.coords.longitude);
   }, (err) => {
-    results.innerHTML = `<div class="empty-state">Couldn't get your location — ${err.message}. Check your browser's location permission for this site.</div>`;
+    results.innerHTML = `<div class="empty-state">Couldn't get your location — ${err.message}. Try a ZIP code instead.</div>`;
   });
+}
+
+async function findStoresByZip(){
+  const results = document.getElementById('storeResults');
+  const zip = document.getElementById('zipInput').value.trim();
+
+  if (!/^\d{5}$/.test(zip)){
+    results.innerHTML = `<div class="empty-state">Enter a valid 5-digit ZIP code.</div>`;
+    return;
+  }
+
+  results.innerHTML = `<div class="empty-state">Looking up ${zip}…</div>`;
+
+  try {
+    // Zippopotam.us — free, no API key required, no signup
+    const resp = await fetch(`https://api.zippopotam.us/us/${zip}`);
+    if (!resp.ok) throw new Error('ZIP not found');
+    const data = await resp.json();
+    const place = data.places[0];
+    await computeAndRenderStores(parseFloat(place.latitude), parseFloat(place.longitude));
+  } catch (e){
+    results.innerHTML = `<div class="empty-state">Couldn't find ZIP ${zip} — double check it and try again.</div>`;
+  }
+}
+
+async function computeAndRenderStores(latitude, longitude){
+  const results = document.getElementById('storeResults');
+
+  if (storesCache.length === 0){
+    const { data, error } = await sb.from('stores').select('*');
+    if (error || !data || data.length === 0){
+      results.innerHTML = `<div class="empty-state">No stores in your database yet — run seed_stores.sql in the SQL Editor.</div>`;
+      return;
+    }
+    storesCache = data;
+  }
+
+  lastStoreResults = storesCache
+    .filter(s => s.lat != null && s.lng != null)
+    .map(s => ({ ...s, distance: haversineMiles(latitude, longitude, s.lat, s.lng) }))
+    .sort((a, b) => a.distance - b.distance);
+
+  renderStoreRows();
 }
 
 function renderStoreRows(){
@@ -1217,9 +1325,10 @@ function setStoreSort(mode){
   renderStoreRows();
 }
 
-function selectStore(storeId){
+async function selectStore(storeId){
   selectedStoreId = storeId;
   renderStoreRows();
+  await loadSpecialtyIngredients();
   renderPricingPanel();
 }
 
@@ -1239,15 +1348,31 @@ function renderPricingPanel(){
     return;
   }
 
+  const isSpecialtyStore = store?.store_type === 'specialty_asian';
+  const flagged = isSpecialtyStore ? [] : lastShoppingItems.filter(it => specialtyIngredientNames.has(it.name));
+  const flagHtml = flagged.length > 0 ? `
+    <div class="note-box" style="background:#fbeee0; border-color:#e0b98a; margin-bottom:14px;">
+      ⚠️ ${store?.name ?? 'This store'} isn't tagged as a specialty Asian grocery — these ingredients may not
+      be carried there: <b>${flagged.map(f => f.name).join(', ')}</b>.
+    </div>` : '';
+
   panel.innerHTML = `
     <div class="pricing-panel">
       <h3>Prices at ${store?.name ?? 'this store'}</h3>
+      ${flagHtml}
+      <button class="scan-btn">
+        📷 Scan a receipt
+        <input type="file" accept="image/*" capture="environment" onchange="handleReceiptScan(event)">
+      </button>
+      <div id="scanStatus"></div>
+      <div id="receiptReview"></div>
       ${lastShoppingItems.map(it => {
         const key = `${it.name}|${it.unit}`;
         const val = storePrices[selectedStoreId][key] ?? '';
+        const isFlagged = flagged.some(f => f.name === it.name);
         return `
-          <div class="price-row">
-            <span>${it.name}</span>
+          <div class="price-row" data-key="${key}">
+            <span>${it.name}${isFlagged ? ' ⚠️' : ''}</span>
             <input type="number" step="0.01" min="0" placeholder="$" value="${val}"
                    oninput="updateStorePrice('${key}', this.value)">
           </div>`;
@@ -1260,6 +1385,105 @@ function renderPricingPanel(){
 function updateStorePrice(key, val){
   storePrices[selectedStoreId][key] = parseFloat(val) || 0;
   updateLoggedTotal();
+}
+
+// ---- Receipt scanning (Tesseract.js OCR, same approach as Popcorn Beauty's invoice scanner) ----
+let parsedReceiptLines = [];
+
+async function handleReceiptScan(event){
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const status = document.getElementById('scanStatus');
+  status.innerHTML = `<div class="scan-status">Reading receipt… this can take a few seconds.</div>`;
+  document.getElementById('receiptReview').innerHTML = '';
+
+  try {
+    const { data: { text } } = await Tesseract.recognize(file, 'eng');
+    const { date, lineItems } = parseReceiptText(text);
+    parsedReceiptLines = matchReceiptItems(lineItems);
+    renderReceiptReview(date);
+    status.innerHTML = parsedReceiptLines.length > 0
+      ? `<div class="scan-status">Found ${parsedReceiptLines.length} line(s) with prices — review the matches below before applying.</div>`
+      : `<div class="scan-status">Couldn't find any price lines on that receipt. Try a clearer photo, or enter prices manually below.</div>`;
+  } catch (e){
+    status.innerHTML = `<div class="scan-status">Scan failed — ${e.message}. Try a clearer, well-lit photo.</div>`;
+  }
+}
+
+function parseReceiptText(text){
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const skipWords = /total|subtotal|tax|change|cash|card|balance|tender|debit|credit|payment/i;
+
+  const dateMatch = text.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+  const date = dateMatch ? dateMatch[1] : null;
+
+  const lineItems = [];
+  lines.forEach(line => {
+    if (skipWords.test(line)) return;
+    // Match a trailing price like "12.99" or "$4.50" at the end of the line
+    const m = line.match(/^(.+?)\s+\$?(\d{1,3}\.\d{2})\s*$/);
+    if (m){
+      const desc = m[1].replace(/[^a-zA-Z0-9\s]/g, ' ').trim();
+      const price = parseFloat(m[2]);
+      if (desc.length > 1 && price > 0 && price < 500) lineItems.push({ desc, price });
+    }
+  });
+  return { date, lineItems };
+}
+
+function matchReceiptItems(lineItems){
+  return lineItems.map(li => {
+    const descLower = li.desc.toLowerCase();
+    let best = null, bestLen = 0;
+    lastShoppingItems.forEach(it => {
+      const nameLower = it.name.toLowerCase();
+      if (descLower.includes(nameLower) && nameLower.length > bestLen){
+        best = it;
+        bestLen = nameLower.length;
+      }
+    });
+    return { ...li, matched: best };
+  });
+}
+
+function renderReceiptReview(date){
+  const box = document.getElementById('receiptReview');
+  if (parsedReceiptLines.length === 0){ box.innerHTML = ''; return; }
+
+  box.innerHTML = `
+    <div class="receipt-review">
+      <h4>Review scanned receipt</h4>
+      ${date ? `<div class="receipt-date">Receipt date: ${date}</div>` : ''}
+      ${parsedReceiptLines.map((li, i) => `
+        <div class="receipt-line">
+          <select id="receiptMatch${i}">
+            <option value="">— ignore this line —</option>
+            ${lastShoppingItems.map(it => `
+              <option value="${it.name}|${it.unit}" ${li.matched && li.matched.name === it.name ? 'selected' : ''}>
+                ${it.name}
+              </option>`).join('')}
+          </select>
+          <span class="r-price">$${li.price.toFixed(2)}</span>
+        </div>
+      `).join('')}
+      <button class="btn btn-saffron" style="margin-top:10px; padding:8px 16px;" onclick="applyReceiptPrices()">Apply prices</button>
+    </div>`;
+}
+
+function applyReceiptPrices(){
+  let applied = 0;
+  parsedReceiptLines.forEach((li, i) => {
+    const sel = document.getElementById(`receiptMatch${i}`);
+    if (sel && sel.value){
+      storePrices[selectedStoreId][sel.value] = li.price;
+      applied++;
+    }
+  });
+  parsedReceiptLines = [];
+  renderPricingPanel();
+  document.getElementById('scanStatus').innerHTML =
+    `<div class="scan-status">Applied ${applied} price(s) from your receipt.</div>`;
 }
 
 function updateLoggedTotal(){
