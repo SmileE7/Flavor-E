@@ -288,6 +288,38 @@
   .hsb-right label{
     font-size:13px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:8px;
   }
+
+  /* ---------- MEAL PLANNER ---------- */
+  .planner-grid{
+    display:grid; grid-template-columns: 90px repeat(7, 1fr);
+    gap:8px; margin-top:22px;
+  }
+  .planner-corner{}
+  .planner-day-header{
+    text-align:center; padding:8px 4px; font-family:'JetBrains Mono', monospace;
+    font-size:11px; color:#8a8172;
+  }
+  .planner-day-header .day-name{display:block; font-size:12.5px; color:var(--ink); font-weight:700; margin-bottom:2px;}
+  .planner-slot-label{
+    display:flex; align-items:center; font-family:'JetBrains Mono', monospace;
+    font-size:11px; text-transform:uppercase; color:#8a8172; font-weight:700;
+  }
+  .planner-cell{
+    background:#fff; border:1px solid var(--paper-line); border-radius:8px;
+    padding:10px; min-height:64px; display:flex; flex-direction:column; justify-content:center;
+  }
+  .planner-cell select{
+    width:100%; padding:6px 4px; border:1px dashed #b5a888; border-radius:5px;
+    font-family:'Work Sans',sans-serif; font-size:11.5px; background:var(--parchment); color:#8a8172;
+  }
+  .planner-filled{position:relative;}
+  .planner-filled .p-name{font-size:12.5px; font-weight:600; color:var(--charcoal); line-height:1.3; cursor:pointer;}
+  .planner-filled .p-name:hover{text-decoration:underline;}
+  .planner-filled .p-meta{font-size:10.5px; color:#8a8172; margin-top:3px;}
+  .planner-remove{
+    position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
+    background:var(--chili); color:#fff; border:none; font-size:11px; line-height:1; cursor:pointer;
+  }
 </style>
 </head>
 <body>
@@ -301,7 +333,7 @@
   <div class="nav-item" id="navRecipes" onclick="showListView('navRecipes')">🍝 Recipes</div>
   <div class="nav-item">🛒 Shopping</div>
   <div class="nav-item">🥣 Sauces</div>
-  <div class="nav-item">📅 Meal Planner</div>
+  <div class="nav-item" id="navMealPlanner" onclick="showMealPlannerView('navMealPlanner')">📅 Meal Planner</div>
   <div class="nav-item">❤️ Favorites</div>
   <div class="nav-item">📖 Cookbook</div>
   <div class="nav-item">⚙ Settings</div>
@@ -369,6 +401,15 @@
     <div class="note-box" style="margin-top:-8px;">
       This household list currently lives in your browser session only — it resets if you close the tab.
       Making it persist across visits needs a login system, which isn't built yet.
+    </div>
+  </div>
+
+  <div id="mealPlannerView" style="display:none;">
+    <h1 class="page-title">Meal Planner</h1>
+    <div class="subtitle">Assign recipes to breakfast, lunch, and dinner for the next 7 days</div>
+    <div id="plannerGrid" class="planner-grid"></div>
+    <div class="note-box">
+      Also session-only for now, same as Household — persists until you close the tab, not across visits.
     </div>
   </div>
 
@@ -758,26 +799,38 @@ function renderRecipe(r){
 }
 
 // ---- View switching ----
+function hideAllViews(){
+  document.getElementById('recipeListView').style.display = 'none';
+  document.getElementById('recipeDetailView').style.display = 'none';
+  document.getElementById('householdView').style.display = 'none';
+  document.getElementById('mealPlannerView').style.display = 'none';
+}
+
 function showListView(navId){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if (navId) document.getElementById(navId).classList.add('active');
+  hideAllViews();
   document.getElementById('recipeListView').style.display = 'block';
-  document.getElementById('recipeDetailView').style.display = 'none';
-  document.getElementById('householdView').style.display = 'none';
   loadRecipeList();
 }
 
 function showHouseholdView(navId){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if (navId) document.getElementById(navId).classList.add('active');
-  document.getElementById('recipeListView').style.display = 'none';
-  document.getElementById('recipeDetailView').style.display = 'none';
+  hideAllViews();
   document.getElementById('householdView').style.display = 'block';
 }
 
+function showMealPlannerView(navId){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if (navId) document.getElementById(navId).classList.add('active');
+  hideAllViews();
+  document.getElementById('mealPlannerView').style.display = 'block';
+  renderMealPlanner();
+}
+
 function showDetailView(){
-  document.getElementById('recipeListView').style.display = 'none';
-  document.getElementById('householdView').style.display = 'none';
+  hideAllViews();
   document.getElementById('recipeDetailView').style.display = 'block';
 }
 
@@ -797,6 +850,8 @@ async function loadRecipeList(){
     return;
   }
 
+  allRecipesCache = data;
+
   grid.innerHTML = data.map(r => `
     <div class="grid-card" onclick="openRecipe('${r.id}')">
       <div class="g-photo">${r.photo_url ? `<img src="${r.photo_url}" alt="${r.name}">` : '🍽️'}</div>
@@ -814,6 +869,83 @@ async function loadRecipeList(){
 function openRecipe(id){
   showDetailView();
   loadRecipeById(id);
+}
+
+// ---- Meal Planner ----
+let allRecipesCache = [];
+let mealPlan = {}; // key: "YYYY-MM-DD_slot" -> {recipeId, recipeName, time}
+const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner'];
+
+function nextSevenDays(){
+  const days = [];
+  const today = new Date();
+  for (let i = 0; i < 7; i++){
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    const iso = d.toISOString().slice(0, 10);
+    const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const dateLabel = d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+    days.push({ iso, dayName, dateLabel });
+  }
+  return days;
+}
+
+async function renderMealPlanner(){
+  if (allRecipesCache.length === 0){
+    const { data } = await sb.from('recipes').select('id, name, prep_minutes, cook_minutes').order('name');
+    allRecipesCache = data || [];
+  }
+
+  const days = nextSevenDays();
+  const grid = document.getElementById('plannerGrid');
+
+  let html = `<div class="planner-corner"></div>`;
+  days.forEach(d => {
+    html += `<div class="planner-day-header"><span class="day-name">${d.dayName}</span>${d.dateLabel}</div>`;
+  });
+
+  MEAL_SLOTS.forEach(slot => {
+    html += `<div class="planner-slot-label">${slot}</div>`;
+    days.forEach(d => {
+      const key = `${d.iso}_${slot}`;
+      const entry = mealPlan[key];
+      if (entry){
+        html += `
+          <div class="planner-cell planner-filled">
+            <button class="planner-remove" onclick="removeMeal('${key}')">×</button>
+            <div class="p-name" onclick="openRecipe('${entry.recipeId}')">${entry.recipeName}</div>
+            <div class="p-meta">${entry.time ?? ''} min</div>
+          </div>`;
+      } else {
+        html += `
+          <div class="planner-cell">
+            <select onchange="assignMeal('${key}', this.value)">
+              <option value="">+ Add recipe</option>
+              ${allRecipesCache.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+            </select>
+          </div>`;
+      }
+    });
+  });
+
+  grid.innerHTML = html;
+}
+
+function assignMeal(key, recipeId){
+  if (!recipeId) return;
+  const recipe = allRecipesCache.find(r => r.id === recipeId);
+  if (!recipe) return;
+  mealPlan[key] = {
+    recipeId,
+    recipeName: recipe.name,
+    time: (recipe.prep_minutes ?? 0) + (recipe.cook_minutes ?? 0)
+  };
+  renderMealPlanner();
+}
+
+function removeMeal(key){
+  delete mealPlan[key];
+  renderMealPlanner();
 }
 
 showListView('navHome');
