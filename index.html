@@ -180,17 +180,23 @@
   .cook-nav-btns{display:flex; gap:10px;}
 
   /* ---------- VIDEOS ---------- */
-  .video-list{display:flex; flex-direction:column; gap:8px;}
-  .video-row{
-    display:flex; justify-content:space-between; align-items:center;
-    padding:10px 14px; background:var(--parchment-deep); border-radius:6px; font-size:13.5px;
-  }
+  .video-list{display:flex; flex-direction:column; gap:20px;}
+  .video-item{}
+  .video-label-row{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
   .video-label{
     font-family:'JetBrains Mono', monospace; font-size:10px; text-transform:uppercase;
-    background:var(--chili); color:#fff; padding:3px 8px; border-radius:4px; margin-right:10px;
+    background:var(--chili); color:#fff; padding:3px 8px; border-radius:4px;
   }
-  a.video-link{color:var(--ink); font-weight:600; text-decoration:none;}
-  a.video-link:hover{text-decoration:underline;}
+  .video-unreviewed{font-size:11px; color:#b5a888; font-style:italic;}
+  .video-embed{
+    position:relative; width:100%; padding-top:56.25%; /* 16:9 */
+    border-radius:8px; overflow:hidden; background:var(--ink);
+  }
+  .video-embed iframe{position:absolute; inset:0; width:100%; height:100%; border:0;}
+  .video-fallback{
+    display:block; padding:14px; background:var(--parchment-deep); border-radius:8px;
+    color:var(--ink); font-size:13.5px; text-decoration:none; font-weight:600;
+  }
 
   .start-btn{
     margin-top:6px; display:inline-block; background:var(--chili); color:#fff;
@@ -387,17 +393,30 @@ let activeEquip = null;
 function fmtAmount(ri, scale = 1){
   if (ri.amount == null) return '';
   const raw = ri.amount * scale;
-  // Round sensibly: discrete items (cloves, blocks, cans, stalks) to nearest 0.5,
-  // liquids/spoons to nearest 0.25 so it maps to a real fraction most of the time.
   const discrete = ['clove','block','can','stalk'].includes(ri.unit);
   const rounded = discrete ? Math.round(raw*2)/2 : Math.round(raw*4)/4;
-  const amt = FRACTIONS[rounded] ?? (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2));
+  const whole = Math.floor(rounded);
+  const frac = Math.round((rounded - whole) * 100) / 100;
+  let amt;
+  if (frac === 0) {
+    amt = String(whole);
+  } else if (whole === 0) {
+    amt = FRACTIONS[frac] ?? frac.toFixed(2);
+  } else {
+    amt = `${whole}${FRACTIONS[frac] ? ' ' + FRACTIONS[frac] : '.' + frac.toFixed(2).split('.')[1]}`;
+  }
   return ri.unit ? `${amt} ${ri.unit}` : amt;
 }
 
 function starRating(difficulty){
   const d = difficulty || 0;
   return '★'.repeat(d) + '☆'.repeat(5 - d);
+}
+
+function extractYouTubeId(url){
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
 }
 
 // ---- Household & portion scaling ----
@@ -619,13 +638,21 @@ function renderRecipe(r){
       });
     });
 
-  // ---- Videos ----
-  document.getElementById('videoList').innerHTML = (r.recipe_videos || []).map(v=>`
-    <div class="video-row">
-      <span><span class="video-label">${v.label}</span>
-      <a class="video-link" href="${v.url}" target="_blank">${v.label}</a></span>
-    </div>
-  `).join('');
+  // ---- Videos: real embeds where we have a verified video, honest fallback otherwise ----
+  document.getElementById('videoList').innerHTML = (r.recipe_videos || []).map(v=>{
+    const ytId = extractYouTubeId(v.url);
+    const media = (ytId && v.reviewed)
+      ? `<div class="video-embed"><iframe src="https://www.youtube-nocookie.com/embed/${ytId}" title="${v.label}" loading="lazy" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`
+      : `<a class="video-fallback" href="${v.url}" target="_blank">🔍 Search this on YouTube — not yet reviewed and picked</a>`;
+    return `
+      <div class="video-item">
+        <div class="video-label-row">
+          <span class="video-label">${v.label}</span>
+          ${!v.reviewed ? '<span class="video-unreviewed">unreviewed placeholder</span>' : ''}
+        </div>
+        ${media}
+      </div>`;
+  }).join('');
 
   document.getElementById('loadingMsg').style.display = 'none';
   document.getElementById('recipeCard').style.display = 'block';
