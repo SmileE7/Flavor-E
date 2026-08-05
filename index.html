@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flavor-E</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,700;1,600&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1B2A41;
+    --ink-soft:#2A3B57;
+    --parchment:#F3EAD8;
+    --parchment-deep:#E9DCC3;
+    --saffron:#D4A017;
+    --chili:#C1440E;
+    --sage:#6B8F71;
+    --charcoal:#2A2A28;
+    --paper-line: rgba(27,42,65,0.12);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--parchment);
+    color:var(--charcoal);
+    font-family:'Work Sans', sans-serif;
+    display:flex;
+    min-height:100vh;
+  }
+  .stat{font-family:'JetBrains Mono', monospace;}
+
+  /* ---------- SIDEBAR (the "passport spine") ---------- */
+  .sidebar{
+    width:220px;
+    background:var(--ink);
+    color:var(--parchment);
+    padding:28px 18px;
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    flex-shrink:0;
+  }
+  .brand{
+    font-family:'Fraunces', serif;
+    font-style:italic;
+    font-weight:600;
+    font-size:22px;
+    margin-bottom:26px;
+    letter-spacing:0.3px;
+  }
+  .brand span{color:var(--saffron);}
+  .nav-item{
+    padding:10px 12px;
+    border-radius:6px;
+    font-size:14.5px;
+    cursor:pointer;
+    opacity:0.78;
+    transition: all .15s ease;
+  }
+  .nav-item:hover{opacity:1; background:var(--ink-soft);}
+  .nav-item.active{opacity:1; background:var(--ink-soft); box-shadow:inset 3px 0 0 var(--saffron);}
+
+  /* ---------- MAIN ---------- */
+  .main{flex:1; padding:36px 44px; max-width:920px;}
+  h1.page-title{
+    font-family:'Fraunces', serif;
+    font-weight:700;
+    font-size:32px;
+    margin:0 0 4px 0;
+  }
+  .subtitle{color:#6b6558; font-size:14.5px; margin-bottom:28px;}
+
+  /* ---------- STAMP BADGE (signature element) ---------- */
+  .stamp{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    flex-direction:column;
+    width:64px; height:64px;
+    border-radius:50%;
+    border:2px dashed var(--chili);
+    color:var(--chili);
+    transform:rotate(-6deg);
+    font-family:'JetBrains Mono', monospace;
+    text-align:center;
+    line-height:1.1;
+    flex-shrink:0;
+  }
+  .stamp .stamp-num{font-size:20px; font-weight:700;}
+  .stamp .stamp-label{font-size:8px; letter-spacing:0.5px; text-transform:uppercase;}
+
+  /* ---------- RECIPE CARD ---------- */
+  .recipe-card{
+    background:#fff;
+    border:1px solid var(--paper-line);
+    border-radius:10px;
+    padding:26px;
+    margin-bottom:24px;
+  }
+  .recipe-header{display:flex; gap:20px; align-items:flex-start;}
+  .recipe-photo{
+    width:140px; height:110px; border-radius:8px; flex-shrink:0;
+    background:var(--parchment-deep);
+    border:1.5px dashed #b5a888;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; position:relative; overflow:hidden;
+  }
+  .recipe-photo img{width:100%; height:100%; object-fit:cover;}
+  .recipe-photo .upload-hint{
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    color:#8a8172; font-size:10.5px; text-align:center; padding:0 10px;
+  }
+  .recipe-photo .upload-icon{font-size:20px;}
+  .recipe-photo input[type=file]{
+    position:absolute; inset:0; opacity:0; cursor:pointer;
+  }
+  .recipe-name{font-family:'Fraunces', serif; font-weight:700; font-size:24px; margin:0 0 6px 0;}
+  .recipe-meta{display:flex; gap:18px; flex-wrap:wrap; margin-top:10px;}
+  .meta-block{font-size:12px; color:#6b6558;}
+  .meta-block .stat{display:block; font-size:15px; color:var(--charcoal); margin-top:2px;}
+  .healthy-tag{
+    display:inline-block; background:var(--sage); color:#fff; font-size:11px;
+    padding:3px 9px; border-radius:20px; margin-left:8px; font-weight:600;
+  }
+
+  .section-label{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11px; letter-spacing:1px; text-transform:uppercase;
+    color:#8a8172; margin:22px 0 10px 0; font-weight:700;
+  }
+
+  /* ---------- INGREDIENTS ---------- */
+  .ingredient-group{margin-bottom:14px;}
+  .ingredient-group h4{font-size:13px; margin:0 0 6px 0; color:var(--chili); font-weight:600;}
+  .ingredient-row{
+    display:flex; align-items:center; gap:10px; padding:6px 0;
+    border-bottom:1px dashed var(--paper-line); font-size:14.5px;
+  }
+  .ingredient-row input[type=checkbox]{width:16px; height:16px; accent-color:var(--sage);}
+  .ingredient-row.checked span{text-decoration:line-through; color:#a39d8f;}
+  .amount{margin-left:auto; color:#8a8172; font-size:13px;}
+
+  /* ---------- EQUIPMENT TOGGLE ---------- */
+  .equip-toggle{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px;}
+  .equip-pill{
+    padding:7px 14px; border-radius:20px; border:1.5px solid var(--ink);
+    font-size:13px; cursor:pointer; background:transparent; color:var(--ink);
+    font-family:'Work Sans', sans-serif; font-weight:500;
+  }
+  .equip-pill.active{background:var(--ink); color:var(--parchment);}
+
+  /* ---------- GUIDED COOKING MODE ---------- */
+  .cook-mode{
+    background:var(--ink); color:var(--parchment);
+    border-radius:10px; padding:30px; margin-top:16px;
+  }
+  .cook-progress{
+    display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;
+  }
+  .cook-progress .stamp{width:52px; height:52px; border-color:var(--saffron); color:var(--saffron);}
+  .cook-progress .stamp .stamp-num{font-size:16px;}
+  .cook-step-title{font-family:'Fraunces', serif; font-style:italic; font-weight:600; font-size:22px; margin:0 0 10px 0;}
+  .cook-instruction{font-size:16px; line-height:1.6; margin-bottom:16px;}
+  .cook-details{display:flex; gap:20px; flex-wrap:wrap; margin-bottom:18px; font-size:13px; opacity:0.85;}
+  .cook-details b{color:var(--saffron);}
+  .timer-box{
+    display:flex; align-items:center; gap:14px; background:var(--ink-soft);
+    padding:14px 18px; border-radius:8px; margin-bottom:20px;
+  }
+  .timer-display{font-family:'JetBrains Mono', monospace; font-size:26px; font-weight:700; color:var(--saffron); min-width:80px;}
+  .btn{
+    border:none; border-radius:6px; padding:10px 18px; font-size:13.5px; font-weight:600;
+    cursor:pointer; font-family:'Work Sans', sans-serif;
+  }
+  .btn-saffron{background:var(--saffron); color:var(--ink);}
+  .btn-outline{background:transparent; border:1.5px solid var(--parchment); color:var(--parchment);}
+  .btn-outline:hover{background:rgba(243,234,216,0.1);}
+  .cook-nav{display:flex; justify-content:space-between; margin-top:10px;}
+  .cook-nav-btns{display:flex; gap:10px;}
+
+  /* ---------- VIDEOS ---------- */
+  .video-list{display:flex; flex-direction:column; gap:8px;}
+  .video-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; background:var(--parchment-deep); border-radius:6px; font-size:13.5px;
+  }
+  .video-label{
+    font-family:'JetBrains Mono', monospace; font-size:10px; text-transform:uppercase;
+    background:var(--chili); color:#fff; padding:3px 8px; border-radius:4px; margin-right:10px;
+  }
+  a.video-link{color:var(--ink); font-weight:600; text-decoration:none;}
+  a.video-link:hover{text-decoration:underline;}
+
+  .start-btn{
+    margin-top:6px; display:inline-block; background:var(--chili); color:#fff;
+    padding:11px 22px; border-radius:6px; border:none; font-weight:600; font-size:14px; cursor:pointer;
+  }
+
+  .note-box{
+    font-size:12.5px; color:#8a8172; margin-top:30px; border-top:1px solid var(--paper-line);
+    padding-top:14px; line-height:1.6;
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="brand">Flavor<span>-E</span></div>
+  <div class="nav-item active">🏠 Home</div>
+  <div class="nav-item">🌎 Countries</div>
+  <div class="nav-item">🥩 Proteins</div>
+  <div class="nav-item">🍝 Recipes</div>
+  <div class="nav-item">🛒 Shopping</div>
+  <div class="nav-item">🥣 Sauces</div>
+  <div class="nav-item">📅 Meal Planner</div>
+  <div class="nav-item">❤️ Favorites</div>
+  <div class="nav-item">📖 Cookbook</div>
+  <div class="nav-item">⚙ Settings</div>
+</div>
+
+<div class="main">
+  <h1 class="page-title">Kimchi Jjigae</h1>
+  <div class="subtitle">🇰🇷 Korea · Traditional · Soups</div>
+
+  <div class="recipe-card">
+    <div class="recipe-header">
+      <div class="recipe-photo" id="photoTile">
+        <div class="upload-hint" id="photoHint">
+          <span class="upload-icon">📷</span>
+          Add your photo
+        </div>
+        <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">
+      </div>
+      <div>
+        <div class="recipe-meta">
+          <div class="meta-block">Difficulty<span class="stat">★★☆☆☆</span></div>
+          <div class="meta-block">Protein<span class="stat">34g</span></div>
+          <div class="meta-block">Cost/serving<span class="stat">$3.12</span></div>
+          <div class="meta-block">Prep<span class="stat">10 min</span></div>
+          <div class="meta-block">Cook<span class="stat">35 min</span></div>
+          <div class="meta-block">Calories<span class="stat">410</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Equipment</div>
+    <div class="equip-toggle" id="equipToggle">
+      <button class="equip-pill active" data-equip="Stovetop">Stovetop</button>
+      <button class="equip-pill" data-equip="Instant Pot">Instant Pot</button>
+      <button class="equip-pill" data-equip="Slow Cooker">Slow Cooker</button>
+    </div>
+
+    <div class="section-label">Ingredients</div>
+    <div class="ingredient-group">
+      <h4>Protein</h4>
+      <div class="ingredient-row"><input type="checkbox"><span>Pork belly</span><span class="amount">1/2 lb</span></div>
+    </div>
+    <div class="ingredient-group">
+      <h4>Base</h4>
+      <div class="ingredient-row"><input type="checkbox"><span>Kimchi, fermented</span><span class="amount">2 cups</span></div>
+      <div class="ingredient-row"><input type="checkbox"><span>Onion</span><span class="amount">1/2, sliced</span></div>
+      <div class="ingredient-row"><input type="checkbox"><span>Garlic</span><span class="amount">3 cloves</span></div>
+      <div class="ingredient-row"><input type="checkbox"><span>Tofu, firm</span><span class="amount">1/2 block</span></div>
+      <div class="ingredient-row"><input type="checkbox"><span>Green onion</span><span class="amount">2 stalks</span></div>
+    </div>
+    <div class="ingredient-group">
+      <h4>Sauce</h4>
+      <div class="ingredient-row"><input type="checkbox"><span>Gochujang</span><span class="amount">1 tbsp</span></div>
+      <div class="ingredient-row"><input type="checkbox"><span>Gochugaru</span><span class="amount">1 tbsp</span></div>
+      <div class="ingredient-row"><input type="checkbox"><span>Broth (anchovy or veg)</span><span class="amount">2 cups</span></div>
+    </div>
+    <div class="ingredient-group">
+      <h4>Optional substitutions</h4>
+      <div class="ingredient-row"><input type="checkbox"><span>Spam, sliced <em>(instead of pork belly)</em></span><span class="amount">1/2 can</span></div>
+    </div>
+
+    <button class="start-btn" onclick="startCookMode()">▶ Start Guided Cooking</button>
+
+    <div id="cookMode" style="display:none;"></div>
+
+    <div class="section-label">Visual Learning</div>
+    <div class="video-list">
+      <div class="video-row"><span><span class="video-label">Best Overall</span><a class="video-link" href="#" target="_blank">Maangchi's Kimchi Jjigae</a></span></div>
+      <div class="video-row"><span><span class="video-label">Quick Guide</span><a class="video-link" href="#" target="_blank">5-min stovetop version</a></span></div>
+      <div class="video-row"><span><span class="video-label">Technique Only</span><a class="video-link" href="#" target="_blank">How to tell kimchi is ripe enough</a></span></div>
+    </div>
+
+    <div class="note-box">
+      Prototype note: this recipe is hard-coded as the working template. Once the schema is live in Supabase,
+      this card renders from <span class="stat">recipes</span> + <span class="stat">recipe_ingredients</span> +
+      <span class="stat">recipe_steps</span> + <span class="stat">recipe_videos</span> for any recipe_id —
+      meatballs and soy-garlic chicken slot into the exact same layout next.
+      <br><br>
+      Photo tile uploads a real image in-browser now — click it and try a photo of your own. In the live version
+      it'll push to Supabase Storage and save the URL to <span class="stat">recipes.photo_url</span>, the same
+      pattern as your invoice-files bucket.
+    </div>
+  </div>
+</div>
+
+<script>
+// Photo upload — prototype shows it in-browser only (in-memory).
+// Real version uploads to Supabase Storage and saves the returned URL
+// to recipes.photo_url, same pattern as your invoice-files bucket.
+function handlePhotoUpload(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const tile = document.getElementById('photoTile');
+    tile.innerHTML = `<img src="${e.target.result}" alt="Kimchi Jjigae"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Ingredient checklist toggle
+document.querySelectorAll('.ingredient-row input[type=checkbox]').forEach(cb=>{
+  cb.addEventListener('change', e=>{
+    e.target.closest('.ingredient-row').classList.toggle('checked', e.target.checked);
+  });
+});
+
+// Equipment toggle -> swaps which step set is active
+let activeEquip = 'Stovetop';
+document.querySelectorAll('.equip-pill').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.equip-pill').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    activeEquip = btn.dataset.equip;
+  });
+});
+
+// ---- STEP DATA (equipment-aware: shared array per equipment, matches recipe_steps table shape) ----
+const stepsByEquip = {
+  'Stovetop': [
+    {title:'Brown the pork', instruction:'Trim excess fat and pat pork belly dry. Brown in a dry pot over medium-high heat until edges crisp.', minutes:5, timer:300, equipment_needed:'Heavy-bottomed pot', safety:'Watch for oil splatter — keep a lid nearby.'},
+    {title:'Build the base', instruction:'Add onion and garlic, cook until fragrant. Stir in gochujang and gochugaru, toast for 30 seconds.', minutes:3, timer:180, equipment_needed:null, safety:null},
+    {title:'Add kimchi', instruction:'Add kimchi and its juices. Cook for 5 minutes to deepen the flavor before adding liquid.', minutes:5, timer:300, equipment_needed:null, safety:null, mistake:'Don\u2019t skip this — under-cooked kimchi tastes flat.'},
+    {title:'Simmer', instruction:'Pour in broth, bring to a boil, then reduce to a simmer for 15 minutes.', minutes:15, timer:900, equipment_needed:null, safety:null},
+    {title:'Add tofu and finish', instruction:'Gently add tofu cubes and green onion. Simmer 5 more minutes without stirring hard, so the tofu holds together.', minutes:5, timer:300, equipment_needed:null, safety:null}
+  ],
+  'Instant Pot': [
+    {title:'Saut\u00e9 the pork', instruction:'Use Saut\u00e9 mode. Brown pork belly directly in the pot.', minutes:5, timer:300, equipment_needed:'Instant Pot', safety:null},
+    {title:'Build the base', instruction:'Add onion, garlic, gochujang, gochugaru. Saut\u00e9 30 seconds.', minutes:2, timer:120, equipment_needed:null, safety:null},
+    {title:'Add kimchi + broth', instruction:'Add kimchi and broth. Seal lid, pressure cook on High for 8 minutes.', minutes:8, timer:480, equipment_needed:null, safety:'Use quick release carefully — steam is hot.'},
+    {title:'Finish', instruction:'Open lid, switch to Saut\u00e9, add tofu and green onion, simmer uncovered 3 minutes.', minutes:3, timer:180, equipment_needed:null, safety:null}
+  ],
+  'Slow Cooker': [
+    {title:'Brown the pork (stovetop first)', instruction:'Brown pork in a pan, then transfer to the slow cooker.', minutes:5, timer:300, equipment_needed:'Pan + slow cooker', safety:null},
+    {title:'Combine', instruction:'Add kimchi, onion, garlic, gochujang, gochugaru, and broth. Stir once.', minutes:3, timer:null, equipment_needed:null, safety:null},
+    {title:'Cook low and slow', instruction:'Cover and cook on Low for 5 hours.', minutes:300, timer:18000, equipment_needed:null, safety:null},
+    {title:'Add tofu', instruction:'Stir in tofu and green onion, cook 15 more minutes on Low.', minutes:15, timer:900, equipment_needed:null, safety:null}
+  ]
+};
+
+let currentStep = 0;
+let timerInterval = null;
+let timerRemaining = 0;
+
+function startCookMode(){
+  currentStep = 0;
+  document.getElementById('cookMode').style.display = 'block';
+  renderStep();
+  document.getElementById('cookMode').scrollIntoView({behavior:'smooth'});
+}
+
+function renderStep(){
+  const steps = stepsByEquip[activeEquip];
+  const s = steps[currentStep];
+  const box = document.getElementById('cookMode');
+  clearInterval(timerInterval);
+
+  box.innerHTML = `
+    <div class="cook-mode">
+      <div class="cook-progress">
+        <div class="stamp"><div class="stamp-num">${currentStep+1}/${steps.length}</div><div class="stamp-label">Step</div></div>
+        <button class="btn btn-outline" onclick="speakStep()">🔊 Read aloud</button>
+      </div>
+      <div class="cook-step-title">${s.title}</div>
+      <div class="cook-instruction">${s.instruction}</div>
+      <div class="cook-details">
+        <div><b>Time:</b> ~${s.minutes} min</div>
+        ${s.equipment_needed ? `<div><b>Equipment:</b> ${s.equipment_needed}</div>` : ''}
+        ${s.safety ? `<div><b>Safety:</b> ${s.safety}</div>` : ''}
+        ${s.mistake ? `<div><b>Watch for:</b> ${s.mistake}</div>` : ''}
+      </div>
+      ${s.timer ? `
+      <div class="timer-box">
+        <div class="timer-display" id="timerDisplay">${formatTime(s.timer)}</div>
+        <button class="btn btn-saffron" onclick="startTimer(${s.timer})">Start Timer</button>
+        <button class="btn btn-outline" onclick="clearInterval(timerInterval)">Pause</button>
+      </div>` : ''}
+      <div class="cook-nav">
+        <button class="btn btn-outline" onclick="prevStep()" ${currentStep===0?'disabled style="opacity:.3"':''}>← Previous</button>
+        <div class="cook-nav-btns">
+          <button class="btn btn-outline" onclick="speakStep()">What should this look like?</button>
+          <button class="btn btn-saffron" onclick="nextStep()">${currentStep===steps.length-1 ? 'Finish ✓' : 'Next Step →'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function formatTime(sec){
+  const m = Math.floor(sec/60).toString().padStart(2,'0');
+  const s = (sec%60).toString().padStart(2,'0');
+  return `${m}:${s}`;
+}
+
+function startTimer(seconds){
+  clearInterval(timerInterval);
+  timerRemaining = seconds;
+  timerInterval = setInterval(()=>{
+    timerRemaining--;
+    const el = document.getElementById('timerDisplay');
+    if(el) el.textContent = formatTime(Math.max(timerRemaining,0));
+    if(timerRemaining <= 0){
+      clearInterval(timerInterval);
+      notifyTimerDone();
+    }
+  }, 1000);
+}
+
+function notifyTimerDone(){
+  // Real background notification — requires the app to be installed as a PWA
+  // with notification permission granted. Falls back to an in-page alert.
+  if('Notification' in window && Notification.permission === 'granted'){
+    new Notification('Flavor-E', {body:'Timer done — back to the pot!'});
+  } else if('Notification' in window && Notification.permission !== 'denied'){
+    Notification.requestPermission().then(p=>{
+      if(p==='granted') new Notification('Flavor-E', {body:'Timer done — back to the pot!'});
+    });
+  }
+  speak('Timer\u2019s done.');
+}
+
+function speakStep(){
+  const steps = stepsByEquip[activeEquip];
+  const s = steps[currentStep];
+  speak(`${s.title}. ${s.instruction}`);
+}
+
+function speak(text){
+  if(!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 0.95;
+  window.speechSynthesis.speak(utter);
+}
+
+function nextStep(){
+  const steps = stepsByEquip[activeEquip];
+  if(currentStep < steps.length-1){
+    currentStep++;
+    renderStep();
+  } else {
+    document.getElementById('cookMode').innerHTML = `<div class="cook-mode" style="text-align:center;">
+      <div class="cook-step-title">🎉 Done — enjoy your kimchi jjigae</div>
+    </div>`;
+  }
+}
+function prevStep(){
+  if(currentStep>0){ currentStep--; renderStep(); }
+}
+
+// Request notification permission up front (so timers can alert in background)
+if('Notification' in window && Notification.permission === 'default'){
+  // Left as a manual trigger rather than auto-prompting on load —
+  // real version should ask this from a Settings toggle, not on page load.
+}
+</script>
+
+</body>
+</html>
