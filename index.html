@@ -362,6 +362,13 @@
     width:70px; padding:5px 7px; border:1px solid var(--paper-line); border-radius:5px;
     font-family:'JetBrains Mono', monospace; font-size:13px; background:var(--parchment); margin-left:auto;
   }
+  .store-row .s-rating{font-size:11.5px; color:#8a8172; margin-top:2px;}
+  .sort-toggle{display:flex; gap:8px; margin-bottom:14px;}
+  .sort-toggle button{
+    padding:6px 12px; border-radius:16px; border:1.5px solid var(--ink); background:transparent;
+    color:var(--ink); font-size:12px; font-weight:600; cursor:pointer;
+  }
+  .sort-toggle button.active{background:var(--ink); color:var(--parchment);}
 </style>
 </head>
 <body>
@@ -369,13 +376,12 @@
 <div class="sidebar">
   <div class="brand">Flavor<span>-E</span></div>
   <div class="nav-item active" id="navHome" onclick="showListView('navHome')">🏠 Home</div>
-  <div class="nav-item" id="navHousehold" onclick="showHouseholdView('navHousehold')">🏡 Household</div>
+  <div class="nav-item" id="navMealPlanner" onclick="showMealPlannerView('navMealPlanner')">🏡 Household & Meal Planner</div>
   <div class="nav-item">🌎 Countries</div>
   <div class="nav-item">🥩 Proteins</div>
   <div class="nav-item" id="navRecipes" onclick="showListView('navRecipes')">🍝 Recipes</div>
   <div class="nav-item" id="navShopping" onclick="showShoppingView('navShopping')">🛒 Shopping</div>
   <div class="nav-item">🥣 Sauces</div>
-  <div class="nav-item" id="navMealPlanner" onclick="showMealPlannerView('navMealPlanner')">📅 Meal Planner</div>
   <div class="nav-item">❤️ Favorites</div>
   <div class="nav-item">📖 Cookbook</div>
   <div class="nav-item">⚙ Settings</div>
@@ -391,11 +397,12 @@
     </div>
   </div>
 
-  <div id="householdView" style="display:none;">
-    <h1 class="page-title">Household</h1>
-    <div class="subtitle">Set your family once — every recipe scales to this automatically</div>
+  <div id="mealPlannerView" style="display:none;">
+    <h1 class="page-title">Household & Meal Planner</h1>
+    <div class="subtitle">Set your family once, then plan breakfast, lunch, and dinner around them</div>
 
     <div class="household-card">
+      <h2 style="font-family:'Fraunces', serif; font-weight:700; font-size:16px; margin:0 0 10px 0;">🏡 Household</h2>
       <div class="household-sub">
         Add each person you're cooking for. Kids scale by published USDA age/sex/activity guidelines —
         not by weight — so a 6-year-old's portion is sized sensibly without anyone guessing or tracking numbers.
@@ -440,18 +447,13 @@
       <div class="household-totals" id="householdTotals"></div>
     </div>
 
-    <div class="note-box" style="margin-top:-8px;">
-      This household list currently lives in your browser session only — it resets if you close the tab.
-      Making it persist across visits needs a login system, which isn't built yet.
-    </div>
-  </div>
-
-  <div id="mealPlannerView" style="display:none;">
-    <h1 class="page-title">Meal Planner</h1>
-    <div class="subtitle">Assign recipes to breakfast, lunch, and dinner for the next 7 days</div>
+    <h2 style="font-family:'Fraunces', serif; font-weight:700; font-size:18px; margin:28px 0 4px 0;">📅 This Week</h2>
+    <div class="subtitle" style="margin-bottom:0;">Assign recipes to breakfast, lunch, and dinner for the next 7 days</div>
     <div id="plannerGrid" class="planner-grid"></div>
+
     <div class="note-box">
-      Also session-only for now, same as Household — persists until you close the tab, not across visits.
+      Both sections are session-only for now — they reset if you close the tab. Making them persist
+      across visits needs a login system, which isn't built yet.
     </div>
   </div>
 
@@ -694,7 +696,7 @@ function renderHouseholdSummaryBar(){
   if (household.length === 0){
     bar.innerHTML = `
       <div class="hsb-left">No household set yet — this recipe shows its default serving size.
-        <span class="hsb-edit" onclick="showHouseholdView('navHousehold')">Set up household →</span>
+        <span class="hsb-edit" onclick="showMealPlannerView('navMealPlanner')">Set up household →</span>
       </div>`;
     return;
   }
@@ -709,7 +711,7 @@ function renderHouseholdSummaryBar(){
   bar.innerHTML = `
     <div class="hsb-left">
       🏡 Cooking for <b>${household.length}</b> (${names}) — ~${totalAdultEquiv.toFixed(1)} adult-equivalent portions
-      <span class="hsb-edit" onclick="showHouseholdView('navHousehold')">Edit →</span>
+      <span class="hsb-edit" onclick="showMealPlannerView('navMealPlanner')">Edit →</span>
     </div>
     <div class="hsb-right">
       <label>
@@ -874,7 +876,6 @@ function renderRecipe(r){
 function hideAllViews(){
   document.getElementById('recipeListView').style.display = 'none';
   document.getElementById('recipeDetailView').style.display = 'none';
-  document.getElementById('householdView').style.display = 'none';
   document.getElementById('mealPlannerView').style.display = 'none';
   document.getElementById('shoppingView').style.display = 'none';
 }
@@ -885,13 +886,6 @@ function showListView(navId){
   hideAllViews();
   document.getElementById('recipeListView').style.display = 'block';
   loadRecipeList();
-}
-
-function showHouseholdView(navId){
-  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
-  if (navId) document.getElementById(navId).classList.add('active');
-  hideAllViews();
-  document.getElementById('householdView').style.display = 'block';
 }
 
 function showMealPlannerView(navId){
@@ -1114,6 +1108,7 @@ async function renderShoppingList(){
   // Merged ingredient checklist
   const items = Object.values(aggregate).sort((a,b) => a.name.localeCompare(b.name));
   lastShoppingItems = items;
+  if (selectedStoreId) renderPricingPanel(); // refresh in case it rendered before this data arrived
   if (items.length === 0){
     box.innerHTML = `<div class="empty-state">No ingredients found for your planned meals.</div>`;
     return;
@@ -1140,6 +1135,7 @@ function toggleShoppingItem(key){
 
 // ---- Nearest store finder (real geolocation, no API key needed) ----
 let storesCache = [];
+let storeSortMode = 'distance';
 
 function haversineMiles(lat1, lng1, lat2, lng2){
   const R = 3958.8; // Earth radius in miles
@@ -1185,22 +1181,40 @@ async function findNearestStores(){
 
 function renderStoreRows(){
   const results = document.getElementById('storeResults');
-  results.innerHTML = lastStoreResults.map(s => `
+  if (lastStoreResults.length === 0) return;
+
+  const sorted = [...lastStoreResults].sort((a, b) =>
+    storeSortMode === 'rating' ? (b.rating ?? 0) - (a.rating ?? 0) : a.distance - b.distance
+  );
+
+  const toggle = `
+    <div class="sort-toggle">
+      <button class="${storeSortMode === 'distance' ? 'active' : ''}" onclick="setStoreSort('distance')">Nearest</button>
+      <button class="${storeSortMode === 'rating' ? 'active' : ''}" onclick="setStoreSort('rating')">Highest Rated</button>
+    </div>`;
+
+  results.innerHTML = toggle + sorted.map(s => `
     <div class="store-row ${s.id === selectedStoreId ? 'selected' : ''}" onclick="selectStore('${s.id}')">
       <div>
         <div class="s-name">${s.name}</div>
         <div class="s-addr">${s.address ?? ''}</div>
+        ${s.rating ? `<div class="s-rating">★ ${s.rating} (${(s.rating_count ?? 0).toLocaleString()} reviews)</div>` : ''}
       </div>
       <div class="s-dist">${s.distance.toFixed(1)} mi</div>
     </div>
   `).join('') + (lastEstimatedTotal > 0 ? `
     <div class="t-block" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--paper-line);">
-      Estimated shopping trip at ${lastStoreResults[0]?.name ?? 'nearest store'}
+      Estimated shopping trip at ${sorted[0]?.name ?? 'this store'}
       <span class="stat">~$${lastEstimatedTotal.toFixed(2)}</span>
       <div style="font-size:11px; color:#8a8172; margin-top:4px; font-family:'Work Sans',sans-serif;">
         Based on recipe cost estimates, not that store's actual prices — no live pricing data exists for it yet.
       </div>
     </div>` : '');
+}
+
+function setStoreSort(mode){
+  storeSortMode = mode;
+  renderStoreRows();
 }
 
 function selectStore(storeId){
