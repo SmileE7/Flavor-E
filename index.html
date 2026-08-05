@@ -272,6 +272,22 @@
     font-weight:600; cursor:pointer; text-decoration:none;
   }
   .empty-state{color:#a39d8f; font-size:14px; padding:30px 0;}
+
+  /* ---------- HOUSEHOLD SUMMARY BAR (compact, on recipe pages) ---------- */
+  .household-summary-bar{
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;
+    background:#fff; border:1px solid var(--paper-line); border-radius:10px;
+    padding:14px 18px; margin-bottom:20px;
+  }
+  .hsb-left{font-size:13.5px; color:var(--charcoal);}
+  .hsb-left b{color:var(--chili);}
+  .hsb-edit{
+    font-size:12.5px; color:var(--ink); font-weight:600; text-decoration:underline;
+    cursor:pointer; margin-left:8px;
+  }
+  .hsb-right label{
+    font-size:13px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:8px;
+  }
 </style>
 </head>
 <body>
@@ -279,6 +295,7 @@
 <div class="sidebar">
   <div class="brand">Flavor<span>-E</span></div>
   <div class="nav-item active" id="navHome" onclick="showListView('navHome')">🏠 Home</div>
+  <div class="nav-item" id="navHousehold" onclick="showHouseholdView('navHousehold')">🏡 Household</div>
   <div class="nav-item">🌎 Countries</div>
   <div class="nav-item">🥩 Proteins</div>
   <div class="nav-item" id="navRecipes" onclick="showListView('navRecipes')">🍝 Recipes</div>
@@ -300,15 +317,11 @@
     </div>
   </div>
 
-  <div id="recipeDetailView" style="display:none;">
-    <span class="back-link" onclick="showListView('navRecipes')">← Back to Recipes</span>
-    <h1 class="page-title" id="recipeTitle">Loading…</h1>
-    <div class="subtitle" id="recipeSubtitle"></div>
-
-    <div id="loadingMsg" style="color:#8a8172; font-size:13px;">Fetching recipe from Supabase…</div>
+  <div id="householdView" style="display:none;">
+    <h1 class="page-title">Household</h1>
+    <div class="subtitle">Set your family once — every recipe scales to this automatically</div>
 
     <div class="household-card">
-      <h2>🏡 Household & Portions</h2>
       <div class="household-sub">
         Add each person you're cooking for. Kids scale by published USDA age/sex/activity guidelines —
         not by weight — so a 6-year-old's portion is sized sensibly without anyone guessing or tracking numbers.
@@ -351,14 +364,22 @@
       </div>
 
       <div class="household-totals" id="householdTotals"></div>
-
-      <div class="scale-toggle-row">
-        <label>
-          <input type="checkbox" id="scaleToggle" onchange="onScaleToggle()">
-          Scale this recipe's ingredients for my household
-        </label>
-      </div>
     </div>
+
+    <div class="note-box" style="margin-top:-8px;">
+      This household list currently lives in your browser session only — it resets if you close the tab.
+      Making it persist across visits needs a login system, which isn't built yet.
+    </div>
+  </div>
+
+  <div id="recipeDetailView" style="display:none;">
+    <span class="back-link" onclick="showListView('navRecipes')">← Back to Recipes</span>
+    <h1 class="page-title" id="recipeTitle">Loading…</h1>
+    <div class="subtitle" id="recipeSubtitle"></div>
+
+    <div id="loadingMsg" style="color:#8a8172; font-size:13px;">Fetching recipe from Supabase…</div>
+
+    <div id="householdSummaryBar" class="household-summary-bar"></div>
 
     <div class="recipe-card" id="recipeCard" style="display:none;">
       <div class="recipe-header">
@@ -549,7 +570,40 @@ function renderHousehold(){
     <div class="t-block">Adult-equivalent portions<span class="stat">${totalAdultEquiv.toFixed(1)}</span></div>
   ` : '';
 
+  renderHouseholdSummaryBar();
   if (scaleEnabled) renderIngredients();
+}
+
+function renderHouseholdSummaryBar(){
+  const bar = document.getElementById('householdSummaryBar');
+  if (!bar) return;
+
+  if (household.length === 0){
+    bar.innerHTML = `
+      <div class="hsb-left">No household set yet — this recipe shows its default serving size.
+        <span class="hsb-edit" onclick="showHouseholdView('navHousehold')">Set up household →</span>
+      </div>`;
+    return;
+  }
+
+  let totalAdultEquiv = 0;
+  household.forEach(m=>{
+    const g = lookupGuideline(m);
+    if (g) totalAdultEquiv += g.calories / REFERENCE_ADULT_CALORIES;
+  });
+  const names = household.map(m=>m.name).join(', ');
+
+  bar.innerHTML = `
+    <div class="hsb-left">
+      🏡 Cooking for <b>${household.length}</b> (${names}) — ~${totalAdultEquiv.toFixed(1)} adult-equivalent portions
+      <span class="hsb-edit" onclick="showHouseholdView('navHousehold')">Edit →</span>
+    </div>
+    <div class="hsb-right">
+      <label>
+        <input type="checkbox" id="scaleToggle" onchange="onScaleToggle()" ${scaleEnabled ? 'checked' : ''}>
+        Scale ingredients for my household
+      </label>
+    </div>`;
 }
 
 function onScaleToggle(){
@@ -700,6 +754,7 @@ function renderRecipe(r){
 
   document.getElementById('loadingMsg').style.display = 'none';
   document.getElementById('recipeCard').style.display = 'block';
+  renderHouseholdSummaryBar();
 }
 
 // ---- View switching ----
@@ -708,11 +763,21 @@ function showListView(navId){
   if (navId) document.getElementById(navId).classList.add('active');
   document.getElementById('recipeListView').style.display = 'block';
   document.getElementById('recipeDetailView').style.display = 'none';
+  document.getElementById('householdView').style.display = 'none';
   loadRecipeList();
+}
+
+function showHouseholdView(navId){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if (navId) document.getElementById(navId).classList.add('active');
+  document.getElementById('recipeListView').style.display = 'none';
+  document.getElementById('recipeDetailView').style.display = 'none';
+  document.getElementById('householdView').style.display = 'block';
 }
 
 function showDetailView(){
   document.getElementById('recipeListView').style.display = 'none';
+  document.getElementById('householdView').style.display = 'none';
   document.getElementById('recipeDetailView').style.display = 'block';
 }
 
