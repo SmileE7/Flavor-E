@@ -320,6 +320,33 @@
     position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
     background:var(--chili); color:#fff; border:none; font-size:11px; line-height:1; cursor:pointer;
   }
+
+  /* ---------- SHOPPING ---------- */
+  .shopping-columns{display:grid; grid-template-columns: 1.1fr 1fr; gap:24px; align-items:start; margin-top:20px;}
+  @media (max-width: 900px){.shopping-columns{grid-template-columns:1fr;}}
+  .shopping-card{background:#fff; border:1px solid var(--paper-line); border-radius:10px; padding:22px;}
+  .shopping-card h2{font-family:'Fraunces', serif; font-weight:700; font-size:18px; margin:0 0 14px 0;}
+  .shop-row{
+    display:flex; align-items:center; gap:10px; padding:8px 0;
+    border-bottom:1px dashed var(--paper-line); font-size:14px;
+  }
+  .shop-row input[type=checkbox]{width:16px; height:16px; accent-color:var(--sage);}
+  .shop-row.checked span.i-name{text-decoration:line-through; color:#a39d8f;}
+  .shop-row .i-amount{margin-left:auto; color:#8a8172; font-size:12.5px; font-family:'JetBrains Mono', monospace;}
+  .locate-btn{
+    background:var(--ink); color:var(--parchment); border:none; border-radius:8px;
+    padding:11px 18px; font-weight:600; font-size:13.5px; cursor:pointer; margin-bottom:16px;
+  }
+  .store-row{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:10px;
+    padding:12px 0; border-bottom:1px dashed var(--paper-line);
+  }
+  .store-row .s-name{font-weight:600; font-size:14px;}
+  .store-row .s-addr{font-size:12px; color:#8a8172; margin-top:2px;}
+  .store-row .s-dist{
+    font-family:'JetBrains Mono', monospace; font-size:13px; color:var(--chili);
+    font-weight:700; white-space:nowrap;
+  }
 </style>
 </head>
 <body>
@@ -331,7 +358,7 @@
   <div class="nav-item">🌎 Countries</div>
   <div class="nav-item">🥩 Proteins</div>
   <div class="nav-item" id="navRecipes" onclick="showListView('navRecipes')">🍝 Recipes</div>
-  <div class="nav-item">🛒 Shopping</div>
+  <div class="nav-item" id="navShopping" onclick="showShoppingView('navShopping')">🛒 Shopping</div>
   <div class="nav-item">🥣 Sauces</div>
   <div class="nav-item" id="navMealPlanner" onclick="showMealPlannerView('navMealPlanner')">📅 Meal Planner</div>
   <div class="nav-item">❤️ Favorites</div>
@@ -410,6 +437,31 @@
     <div id="plannerGrid" class="planner-grid"></div>
     <div class="note-box">
       Also session-only for now, same as Household — persists until you close the tab, not across visits.
+    </div>
+  </div>
+
+  <div id="shoppingView" style="display:none;">
+    <h1 class="page-title">Shopping</h1>
+    <div class="subtitle">Your list, built from this week's Meal Planner — plus the nearest place to buy it</div>
+
+    <div class="shopping-columns">
+      <div class="shopping-card">
+        <h2>🛒 This Week's List</h2>
+        <div id="shoppingList"></div>
+      </div>
+
+      <div class="shopping-card">
+        <h2>📍 Nearest Store</h2>
+        <button class="locate-btn" onclick="findNearestStores()">Use my location</button>
+        <div id="storeResults" style="font-size:13px; color:#8a8172;">
+          Click above to find the closest store from your current location.
+        </div>
+        <div class="note-box" style="margin-top:16px;">
+          Prices aren't live-tracked — there's no free public API for real-time grocery pricing.
+          This shows genuine distance to real store locations; ingredient pricing would need to be
+          entered manually as you shop, same as your VidaPay invoice workflow.
+        </div>
+      </div>
     </div>
   </div>
 
@@ -804,6 +856,7 @@ function hideAllViews(){
   document.getElementById('recipeDetailView').style.display = 'none';
   document.getElementById('householdView').style.display = 'none';
   document.getElementById('mealPlannerView').style.display = 'none';
+  document.getElementById('shoppingView').style.display = 'none';
 }
 
 function showListView(navId){
@@ -827,6 +880,14 @@ function showMealPlannerView(navId){
   hideAllViews();
   document.getElementById('mealPlannerView').style.display = 'block';
   renderMealPlanner();
+}
+
+function showShoppingView(navId){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if (navId) document.getElementById(navId).classList.add('active');
+  hideAllViews();
+  document.getElementById('shoppingView').style.display = 'block';
+  renderShoppingList();
 }
 
 function showDetailView(){
@@ -946,6 +1007,125 @@ function assignMeal(key, recipeId){
 function removeMeal(key){
   delete mealPlan[key];
   renderMealPlanner();
+}
+
+// ---- Shopping List (aggregated from the current Meal Planner) ----
+let shoppingChecked = new Set();
+
+async function renderShoppingList(){
+  const box = document.getElementById('shoppingList');
+  const uniqueRecipeIds = [...new Set(Object.values(mealPlan).map(e => e.recipeId))];
+
+  if (uniqueRecipeIds.length === 0){
+    box.innerHTML = `<div class="empty-state">Nothing planned yet — add meals in the Meal Planner and they'll show up here.</div>`;
+    return;
+  }
+
+  box.innerHTML = `<div class="empty-state">Building your list…</div>`;
+
+  const results = await Promise.all(uniqueRecipeIds.map(id =>
+    sb.from('recipes')
+      .select('id, servings_default, recipe_ingredients(*, ingredients(canonical_name))')
+      .eq('id', id)
+      .single()
+  ));
+
+  // Household portion scale, reused per-recipe the same way recipe pages do
+  let totalAdultEquiv = 0;
+  household.forEach(m=>{
+    const g = lookupGuideline(m);
+    if (g) totalAdultEquiv += g.calories / REFERENCE_ADULT_CALORIES;
+  });
+
+  const aggregate = {}; // key: "name|unit" -> {name, unit, amount}
+  results.forEach(({ data }) => {
+    if (!data) return;
+    const scale = (household.length > 0 && data.servings_default) ? totalAdultEquiv / data.servings_default : 1;
+    (data.recipe_ingredients || []).forEach(ri => {
+      const name = ri.ingredients?.canonical_name ?? '?';
+      const unit = ri.unit ?? '';
+      const key = `${name}|${unit}`;
+      const amt = (ri.amount ?? 0) * scale;
+      if (!aggregate[key]) aggregate[key] = { name, unit, amount: 0 };
+      aggregate[key].amount += amt;
+    });
+  });
+
+  const items = Object.values(aggregate).sort((a,b) => a.name.localeCompare(b.name));
+  if (items.length === 0){
+    box.innerHTML = `<div class="empty-state">No ingredients found for your planned meals.</div>`;
+    return;
+  }
+
+  box.innerHTML = items.map(it => {
+    const key = `${it.name}|${it.unit}`;
+    const checked = shoppingChecked.has(key);
+    const displayAmt = Math.round(it.amount * 4) / 4;
+    return `
+      <div class="shop-row ${checked ? 'checked' : ''}">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleShoppingItem('${key}')">
+        <span class="i-name">${it.name}</span>
+        <span class="i-amount">${displayAmt}${it.unit ? ' ' + it.unit : ''}</span>
+      </div>`;
+  }).join('');
+}
+
+function toggleShoppingItem(key){
+  if (shoppingChecked.has(key)) shoppingChecked.delete(key);
+  else shoppingChecked.add(key);
+  renderShoppingList();
+}
+
+// ---- Nearest store finder (real geolocation, no API key needed) ----
+let storesCache = [];
+
+function haversineMiles(lat1, lng1, lat2, lng2){
+  const R = 3958.8; // Earth radius in miles
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+async function findNearestStores(){
+  const results = document.getElementById('storeResults');
+
+  if (!('geolocation' in navigator)){
+    results.innerHTML = `<div class="empty-state">Your browser doesn't support location — try a different browser.</div>`;
+    return;
+  }
+
+  results.innerHTML = `<div class="empty-state">Getting your location…</div>`;
+
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const { latitude, longitude } = pos.coords;
+
+    if (storesCache.length === 0){
+      const { data, error } = await sb.from('stores').select('*');
+      if (error || !data || data.length === 0){
+        results.innerHTML = `<div class="empty-state">No stores in your database yet — run seed_stores.sql in the SQL Editor.</div>`;
+        return;
+      }
+      storesCache = data;
+    }
+
+    const withDistance = storesCache
+      .filter(s => s.lat != null && s.lng != null)
+      .map(s => ({ ...s, distance: haversineMiles(latitude, longitude, s.lat, s.lng) }))
+      .sort((a, b) => a.distance - b.distance);
+
+    results.innerHTML = withDistance.map(s => `
+      <div class="store-row">
+        <div>
+          <div class="s-name">${s.name}</div>
+          <div class="s-addr">${s.address ?? ''}</div>
+        </div>
+        <div class="s-dist">${s.distance.toFixed(1)} mi</div>
+      </div>
+    `).join('');
+  }, (err) => {
+    results.innerHTML = `<div class="empty-state">Couldn't get your location — ${err.message}. Check your browser's location permission for this site.</div>`;
+  });
 }
 
 showListView('navHome');
