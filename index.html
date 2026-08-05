@@ -6,6 +6,7 @@
 <title>Flavor-E</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,700;1,600&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --ink:#1B2A41;
@@ -299,6 +300,24 @@
 </div>
 
 <script>
+// ---- Flavor-E's own Supabase project (separate from Popcorn Beauty) ----
+const SUPABASE_URL = 'https://hjmaiqbqrwrdfaygdixx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_eqhZoIjHCCgVpYsMJuZ6rg_YKCOAE16';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Quick connection check — confirms the schema has been run and the
+// browser can actually reach the recipes table. Logs to console only,
+// doesn't block the hard-coded prototype below from rendering.
+(async () => {
+  const { count, error } = await sb.from('recipes').select('*', { count: 'exact', head: true });
+  if (error) {
+    console.warn('Flavor-E: could not reach recipes table yet —', error.message,
+      '\nIf you haven\u2019t run schema.sql in the SQL Editor yet, that\u2019s expected.');
+  } else {
+    console.log(`Flavor-E: connected. ${count ?? 0} recipe(s) in the database.`);
+  }
+})();
+
 // Photo upload — prototype shows it in-browser only (in-memory).
 // Real version uploads to Supabase Storage and saves the returned URL
 // to recipes.photo_url, same pattern as your invoice-files bucket.
