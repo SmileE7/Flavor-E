@@ -447,6 +447,10 @@
     <div class="shopping-columns">
       <div class="shopping-card">
         <h2>🛒 This Week's List</h2>
+        <div class="section-label" style="margin-top:0;">Recipes needed</div>
+        <div id="recipeBreakdown"></div>
+        <div class="household-totals" id="estTotalCost" style="margin-top:14px; padding-top:14px;"></div>
+        <div class="section-label">Ingredients</div>
         <div id="shoppingList"></div>
       </div>
 
@@ -1012,20 +1016,30 @@ function removeMeal(key){
 // ---- Shopping List (aggregated from the current Meal Planner) ----
 let shoppingChecked = new Set();
 
+let lastEstimatedTotal = 0;
+
 async function renderShoppingList(){
   const box = document.getElementById('shoppingList');
-  const uniqueRecipeIds = [...new Set(Object.values(mealPlan).map(e => e.recipeId))];
+  const entries = Object.values(mealPlan);
 
-  if (uniqueRecipeIds.length === 0){
+  if (entries.length === 0){
     box.innerHTML = `<div class="empty-state">Nothing planned yet — add meals in the Meal Planner and they'll show up here.</div>`;
+    document.getElementById('recipeBreakdown').innerHTML = '';
+    document.getElementById('estTotalCost').innerHTML = '';
     return;
   }
 
   box.innerHTML = `<div class="empty-state">Building your list…</div>`;
 
+  // Count how many times each recipe is planned this week — a repeated recipe needs
+  // its ingredients that many times over, not just once.
+  const counts = {};
+  entries.forEach(e => { counts[e.recipeId] = (counts[e.recipeId] || 0) + 1; });
+  const uniqueRecipeIds = Object.keys(counts);
+
   const results = await Promise.all(uniqueRecipeIds.map(id =>
     sb.from('recipes')
-      .select('id, servings_default, recipe_ingredients(*, ingredients(canonical_name))')
+      .select('id, name, servings_default, cost_per_serving, recipe_ingredients(*, ingredients(canonical_name))')
       .eq('id', id)
       .single()
   ));
@@ -1038,19 +1052,46 @@ async function renderShoppingList(){
   });
 
   const aggregate = {}; // key: "name|unit" -> {name, unit, amount}
+  const breakdown = [];
+  let totalCost = 0;
+
   results.forEach(({ data }) => {
     if (!data) return;
-    const scale = (household.length > 0 && data.servings_default) ? totalAdultEquiv / data.servings_default : 1;
+    const count = counts[data.id];
+    const neededServings = household.length > 0 ? totalAdultEquiv : (data.servings_default || 4);
+    const perRecipeScale = household.length > 0 ? totalAdultEquiv / (data.servings_default || 4) : 1;
+    const totalScale = perRecipeScale * count;
+    const estCost = (data.cost_per_serving || 0) * neededServings * count;
+    totalCost += estCost;
+
+    breakdown.push({ name: data.name, count, neededServings, estCost });
+
     (data.recipe_ingredients || []).forEach(ri => {
       const name = ri.ingredients?.canonical_name ?? '?';
       const unit = ri.unit ?? '';
       const key = `${name}|${unit}`;
-      const amt = (ri.amount ?? 0) * scale;
+      const amt = (ri.amount ?? 0) * totalScale;
       if (!aggregate[key]) aggregate[key] = { name, unit, amount: 0 };
       aggregate[key].amount += amt;
     });
   });
 
+  // Recipe breakdown card
+  document.getElementById('recipeBreakdown').innerHTML = breakdown.map(b => `
+    <div class="shop-row">
+      <span class="i-name">${b.name}${b.count > 1 ? ` ×${b.count}` : ''}</span>
+      <span class="i-amount">~${b.neededServings.toFixed(1)} servings · $${b.estCost.toFixed(2)}</span>
+    </div>
+  `).join('');
+
+  document.getElementById('estTotalCost').innerHTML = `
+    <div class="t-block">Estimated total<span class="stat">$${totalCost.toFixed(2)}</span></div>
+    <div style="font-size:11px; color:#8a8172; margin-top:4px;">
+      From each recipe's stored cost_per_serving × servings needed — not a live store price.
+    </div>`;
+  lastEstimatedTotal = totalCost;
+
+  // Merged ingredient checklist
   const items = Object.values(aggregate).sort((a,b) => a.name.localeCompare(b.name));
   if (items.length === 0){
     box.innerHTML = `<div class="empty-state">No ingredients found for your planned meals.</div>`;
@@ -1122,7 +1163,14 @@ async function findNearestStores(){
         </div>
         <div class="s-dist">${s.distance.toFixed(1)} mi</div>
       </div>
-    `).join('');
+    `).join('') + (lastEstimatedTotal > 0 ? `
+      <div class="t-block" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--paper-line);">
+        Estimated shopping trip at ${withDistance[0]?.name ?? 'nearest store'}
+        <span class="stat">~$${lastEstimatedTotal.toFixed(2)}</span>
+        <div style="font-size:11px; color:#8a8172; margin-top:4px; font-family:'Work Sans',sans-serif;">
+          Based on recipe cost estimates, not that store's actual prices — no live pricing data exists for it yet.
+        </div>
+      </div>` : '');
   }, (err) => {
     results.innerHTML = `<div class="empty-state">Couldn't get your location — ${err.message}. Check your browser's location permission for this site.</div>`;
   });
