@@ -303,6 +303,25 @@
     font-size:10px; background:var(--parchment-deep); color:#8a8172;
     padding:2px 8px; border-radius:10px; font-family:'JetBrains Mono', monospace;
   }
+  .photo-loading{
+    width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:6px; color:#8a8172; font-size:11px; text-align:center;
+    background:linear-gradient(135deg,var(--parchment-deep),#fff);
+  }
+  .photo-loading .spinner{
+    width:22px; height:22px; border:3px solid rgba(27,42,65,.14);
+    border-top-color:var(--chili); border-radius:50%; animation:photoSpin .8s linear infinite;
+  }
+  @keyframes photoSpin{to{transform:rotate(360deg);}}
+  .photo-credit{
+    position:absolute; left:6px; bottom:6px; max-width:calc(100% - 12px);
+    background:rgba(27,42,65,.78); color:#fff; border-radius:4px;
+    padding:3px 6px; font-size:9px; line-height:1.2; pointer-events:none;
+  }
+  .photo-tools{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:12px 0 4px;
+  }
+  .photo-tools .photo-status{font-size:12px; color:#8a8172;}
   .fav-btn{
     position:absolute; top:12px; right:12px; background:rgba(255,255,255,0.9);
     border:none; border-radius:50%; width:30px; height:30px; font-size:15px;
@@ -469,6 +488,10 @@
   <div id="recipeListView">
     <h1 class="page-title">Recipes</h1>
     <div class="subtitle">Everything currently in your Flavor-E database</div>
+    <div class="photo-tools">
+      <button class="btn btn-saffron" id="fillPhotosBtn" onclick="fillMissingRecipePhotos()">📷 Match photos to every dish</button>
+      <span class="photo-status" id="photoFillStatus">Dish-specific photos are matched by recipe name and country.</span>
+    </div>
     <div id="tagFilters" class="tag-filters"></div>
     <div id="recipeGrid" class="recipe-grid">
       <div class="empty-state">Loading recipes…</div>
@@ -900,6 +923,7 @@ async function loadRecipeById(id){
 function renderRecipe(r){
   document.getElementById('recipeTitle').textContent = r.name;
   currentRecipeId = r.id;
+  paintDetailRecipePhoto(r);
   renderFavoriteButtonOnDetail();
   const flag = r.countries?.flag_emoji ? r.countries.flag_emoji + ' ' : '';
   document.getElementById('recipeSubtitle').textContent = `${flag}${r.countries?.name ?? ''}`;
@@ -1032,6 +1056,219 @@ function showDetailView(){
 
 let allRecipesFullCache = [];
 let activeTagFilters = new Set();
+
+// ---- Dish-specific photo system ------------------------------------------
+// Priority:
+// 1. A manually approved recipes.photo_url from Supabase.
+// 2. A dish-specific Wikimedia Commons match using recipe name + country.
+//    Commons images are freely licensed for reuse, unlike random blog/stock
+//    photos, so this is safe to auto-embed with proper credit shown.
+// 3. A clear named placeholder rather than an unrelated generic food photo.
+//
+// Resolved Commons photos are cached locally so the same dish keeps the same
+// picture. Duplicate URLs are avoided across recipe cards.
+const PHOTO_CACHE_KEY = 'flavor-e-dish-photo-cache-v2';
+let dishPhotoCache = {};
+let usedResolvedPhotoUrls = new Set();
+
+try {
+  dishPhotoCache = JSON.parse(localStorage.getItem(PHOTO_CACHE_KEY) || '{}');
+} catch (_) {
+  dishPhotoCache = {};
+}
+
+function saveDishPhotoCache(){
+  try { localStorage.setItem(PHOTO_CACHE_KEY, JSON.stringify(dishPhotoCache)); } catch (_) {}
+}
+
+function photoCacheKey(recipe){
+  return `${String(recipe.name || '').trim().toLowerCase()}|${String(recipe.countries?.name || '').trim().toLowerCase()}`;
+}
+
+function cleanPhotoTokens(value){
+  const stop = new Set(['the','and','with','style','recipe','homemade','easy','classic','traditional','authentic','food','dish']);
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 2 && !stop.has(t));
+}
+
+function scoreCommonsCandidate(recipe, page){
+  const title = String(page.title || '').replace(/^File:/i, '').toLowerCase();
+  const recipeTokens = cleanPhotoTokens(`${recipe.name} ${recipe.countries?.name || ''}`);
+  let score = 0;
+
+  recipeTokens.forEach(token => {
+    if (title.includes(token)) score += token.length >= 7 ? 5 : 3;
+  });
+
+  const badWords = ['flag','map','logo','icon','seal','coat of arms','poster','menu','package','uncooked','raw ingredient'];
+  if (badWords.some(word => title.includes(word))) score -= 20;
+
+  const info = page.imageinfo?.[0];
+  const width = Number(info?.thumbwidth || info?.width || 0);
+  const height = Number(info?.thumbheight || info?.height || 0);
+  if (width >= 500 && height >= 350) score += 2;
+  if (width > height) score += 1;
+
+  return score;
+}
+
+async function findDishSpecificPhoto(recipe){
+  if (!recipe?.name) return null;
+
+  const key = photoCacheKey(recipe);
+  const cached = dishPhotoCache[key];
+  if (cached?.url) {
+    usedResolvedPhotoUrls.add(cached.url);
+    return cached;
+  }
+
+  const country = recipe.countries?.name || '';
+  const searches = [
+    `"${recipe.name}" ${country} dish`,
+    `${recipe.name} ${country} cuisine`,
+    `"${recipe.name}" food`
+  ];
+
+  for (const searchText of searches){
+    try {
+      const params = new URLSearchParams({
+        action: 'query',
+        generator: 'search',
+        gsrsearch: searchText,
+        gsrnamespace: '6',
+        gsrlimit: '12',
+        prop: 'imageinfo',
+        iiprop: 'url|extmetadata',
+        iiurlwidth: '900',
+        format: 'json',
+        origin: '*'
+      });
+
+      const response = await fetch(`https://commons.wikimedia.org/w/api.php?${params.toString()}`);
+      if (!response.ok) continue;
+      const payload = await response.json();
+      const pages = Object.values(payload?.query?.pages || {});
+      const ranked = pages
+        .map(page => ({ page, score: scoreCommonsCandidate(recipe, page) }))
+        .filter(item => item.score > 0 && item.page.imageinfo?.[0]?.thumburl)
+        .sort((a,b) => b.score - a.score);
+
+      const unique = ranked.find(item => !usedResolvedPhotoUrls.has(item.page.imageinfo[0].thumburl)) || ranked[0];
+      if (!unique) continue;
+
+      const info = unique.page.imageinfo[0];
+      const credit =
+        info.extmetadata?.Artist?.value?.replace(/<[^>]+>/g,'').slice(0,80) ||
+        'Wikimedia Commons';
+
+      const result = {
+        url: info.thumburl,
+        sourceUrl: info.descriptionurl || info.url,
+        credit,
+        matchedTitle: unique.page.title.replace(/^File:/i,'')
+      };
+
+      dishPhotoCache[key] = result;
+      usedResolvedPhotoUrls.add(result.url);
+      saveDishPhotoCache();
+      return result;
+    } catch (error) {
+      console.warn('Photo search failed for', recipe.name, error);
+    }
+  }
+
+  return null;
+}
+
+function namedPhotoPlaceholder(recipe){
+  const flag = recipe.countries?.flag_emoji || '🍽️';
+  return `
+    <div class="photo-loading" aria-label="No approved photo yet for ${recipe.name}">
+      <div style="font-size:26px;">${flag}</div>
+      <div>${recipe.name}</div>
+    </div>`;
+}
+
+function recipePhotoMarkup(recipe, photo){
+  if (!photo?.url) return namedPhotoPlaceholder(recipe);
+  const source = photo.sourceUrl
+    ? `<a class="photo-credit" href="${photo.sourceUrl}" target="_blank" rel="noopener">Photo: ${photo.credit || 'Wikimedia Commons'}</a>`
+    : '';
+  return `<img src="${photo.url}" alt="${recipe.name}" loading="lazy" onerror="this.parentElement.innerHTML=namedPhotoPlaceholder(${JSON.stringify(recipe).replace(/"/g,'&quot;')})">${source}`;
+}
+
+async function resolveAndPaintRecipePhoto(recipe){
+  if (recipe.photo_url) return;
+
+  const photo = await findDishSpecificPhoto(recipe);
+  if (!photo) return;
+
+  recipe._resolvedPhoto = photo;
+
+  document.querySelectorAll(`[data-recipe-photo="${recipe.id}"]`).forEach(box => {
+    box.innerHTML = recipePhotoMarkup(recipe, photo);
+  });
+
+  if (currentRecipeId === recipe.id){
+    paintDetailRecipePhoto(recipe, photo);
+  }
+}
+
+function paintDetailRecipePhoto(recipe, resolvedPhoto = null){
+  const tile = document.getElementById('photoTile');
+  if (!tile || !recipe) return;
+
+  const photo = recipe.photo_url
+    ? { url: recipe.photo_url, sourceUrl: null, credit: null }
+    : resolvedPhoto || recipe._resolvedPhoto || dishPhotoCache[photoCacheKey(recipe)] || null;
+
+  tile.innerHTML = `
+    ${photo?.url ? recipePhotoMarkup(recipe, photo) : namedPhotoPlaceholder(recipe)}
+    <input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)" aria-label="Upload a replacement photo for ${recipe.name}">
+  `;
+
+  if (!photo?.url && !recipe.photo_url) findDishSpecificPhoto(recipe).then(p => { if (p && currentRecipeId === recipe.id) paintDetailRecipePhoto(recipe, p); });
+}
+
+async function fillMissingRecipePhotos(){
+  const button = document.getElementById('fillPhotosBtn');
+  const status = document.getElementById('photoFillStatus');
+  const missing = allRecipesFullCache.filter(r => !r.photo_url);
+
+  if (!missing.length){
+    status.textContent = 'Every recipe already has a saved photo.';
+    return;
+  }
+
+  button.disabled = true;
+  let finished = 0;
+  let matched = 0;
+  const total = missing.length;
+
+  const worker = async () => {
+    while (missing.length){
+      const recipe = missing.shift();
+      const photo = await findDishSpecificPhoto(recipe);
+      if (photo){
+        recipe._resolvedPhoto = photo;
+        matched++;
+        document.querySelectorAll(`[data-recipe-photo="${recipe.id}"]`).forEach(box => {
+          box.innerHTML = recipePhotoMarkup(recipe, photo);
+        });
+      }
+      finished++;
+      status.textContent = `Matching dish photos: ${finished}/${total} checked · ${matched} matched`;
+    }
+  };
+
+  // Three workers gives good speed without hammering Commons.
+  await Promise.all([worker(), worker(), worker()]);
+  status.textContent = `${matched} missing recipes received dish-specific photos. Existing Supabase photos were preserved.`;
+  button.disabled = false;
+}
 let favoriteIds = new Set();
 let showFavoritesOnly = false;
 let activeCountryFilter = null;
@@ -1163,7 +1400,13 @@ function renderRecipeGrid(){
   grid.innerHTML = filtered.map(r => `
     <div class="grid-card" onclick="openRecipe('${r.id}')">
       <button class="fav-btn" onclick="event.stopPropagation(); toggleFavorite('${r.id}')">${favoriteIds.has(r.id) ? '❤️' : '🤍'}</button>
-      <div class="g-photo">${r.photo_url ? `<img src="${r.photo_url}" alt="${r.name}">` : '🍽️'}</div>
+      <div class="g-photo" data-recipe-photo="${r.id}">
+        ${r.photo_url
+          ? `<img src="${r.photo_url}" alt="${r.name}" loading="lazy">`
+          : (r._resolvedPhoto || dishPhotoCache[photoCacheKey(r)])
+            ? recipePhotoMarkup(r, r._resolvedPhoto || dishPhotoCache[photoCacheKey(r)])
+            : `<div class="photo-loading"><div class="spinner"></div><div>Matching ${r.name}</div></div>`}
+      </div>
       <div class="g-name">${r.name}</div>
       <div class="g-sub">${r.countries?.flag_emoji ?? ''} ${r.countries?.name ?? ''}</div>
       <div class="g-stats">
@@ -1174,6 +1417,9 @@ function renderRecipeGrid(){
       <div class="g-tags">${(r.tags || []).slice(0, 4).map(t => `<span class="g-tag">${t}</span>`).join('')}</div>
     </div>
   `).join('');
+
+  // Resolve only recipes without a manually approved Supabase photo.
+  filtered.filter(r => !r.photo_url).forEach(r => resolveAndPaintRecipePhoto(r));
 }
 
 function openRecipe(id){
@@ -1847,7 +2093,11 @@ async function handlePhotoUpload(event){
       .eq('id', currentRecipeId);
     if (updateError) throw updateError;
 
-    if (currentRecipeData) currentRecipeData.photo_url = publicUrl;
+    if (currentRecipeData) {
+      currentRecipeData.photo_url = publicUrl;
+      delete dishPhotoCache[photoCacheKey(currentRecipeData)];
+      saveDishPhotoCache();
+    }
     allRecipesFullCache = allRecipesFullCache.map(r => r.id === currentRecipeId ? { ...r, photo_url: publicUrl } : r);
     allRecipesCache = allRecipesCache.map(r => r.id === currentRecipeId ? { ...r, photo_url: publicUrl } : r);
     tile.innerHTML = `<img src="${publicUrl}" alt="${currentRecipeData?.name || 'Recipe'}"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
