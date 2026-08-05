@@ -8,6 +8,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,700;1,600&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script async src="https://www.tiktok.com/embed.js"></script>
+<script async src="https://www.instagram.com/embed.js"></script>
 <style>
   :root{
     --ink:#1B2A41;
@@ -642,6 +644,14 @@ function extractYouTubeId(url){
   return m ? m[1] : null;
 }
 
+function detectVideoPlatform(url){
+  if (!url) return { platform: null };
+  if (/tiktok\.com/.test(url)) return { platform: 'tiktok' };
+  if (/instagram\.com\/(reel|p|tv)\//.test(url)) return { platform: 'instagram' };
+  if (extractYouTubeId(url)) return { platform: 'youtube', id: extractYouTubeId(url) };
+  return { platform: null };
+}
+
 // ---- Household & portion scaling ----
 // Reference adult = 2000 kcal/day, the standard FDA nutrition-label baseline.
 // Each household member's calorie need (from published USDA guidelines) is
@@ -904,19 +914,36 @@ function renderRecipe(r){
   // ---- Videos: real embeds where we have a verified video, honest fallback otherwise ----
   const sortedVideos = [...(r.recipe_videos || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   document.getElementById('videoList').innerHTML = sortedVideos.map(v=>{
-    const ytId = extractYouTubeId(v.url);
-    const media = (ytId && v.reviewed)
-      ? `<div class="video-embed"><iframe src="https://www.youtube-nocookie.com/embed/${ytId}" title="${v.label}" loading="lazy" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`
-      : `<a class="video-fallback" href="${v.url}" target="_blank">🔍 Search this on YouTube — not yet reviewed and picked</a>`;
+    const { platform, id } = detectVideoPlatform(v.url);
+    let media;
+    if (platform === 'youtube' && v.reviewed){
+      media = `<div class="video-embed"><iframe src="https://www.youtube-nocookie.com/embed/${id}" title="${v.label}" loading="lazy" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`;
+    } else if (platform === 'tiktok' && v.reviewed){
+      media = `<blockquote class="tiktok-embed" cite="${v.url}" style="max-width:605px; margin:0;"><section></section></blockquote>`;
+    } else if (platform === 'instagram' && v.reviewed){
+      media = `<blockquote class="instagram-media" data-instgrm-permalink="${v.url}" style="margin:0; width:100%;"></blockquote>`;
+    } else {
+      media = `<a class="video-fallback" href="${v.url}" target="_blank">🔍 Search this on YouTube — not yet reviewed and picked</a>`;
+    }
     return `
       <div class="video-item">
         <div class="video-label-row">
           <span class="video-label">${v.label}</span>
           ${!v.reviewed ? '<span class="video-unreviewed">unreviewed placeholder</span>' : ''}
+          ${v.reviewed && platform ? `<span class="video-unreviewed" style="color:#8a8172;">via ${platform}</span>` : ''}
         </div>
         ${media}
       </div>`;
   }).join('');
+
+  // Re-trigger TikTok and Instagram's embed scripts so dynamically-inserted
+  // blockquotes above actually render as players, not raw text.
+  if (window.instgrm?.Embeds) window.instgrm.Embeds.process();
+  if (sortedVideos.some(v => detectVideoPlatform(v.url).platform === 'tiktok' && v.reviewed)){
+    const s = document.createElement('script');
+    s.src = 'https://www.tiktok.com/embed.js';
+    document.body.appendChild(s);
+  }
 
   document.getElementById('loadingMsg').style.display = 'none';
   document.getElementById('recipeCard').style.display = 'block';
@@ -1105,18 +1132,24 @@ function removeMeal(key){
 }
 
 async function surpriseMeWeek(){
-  if (allRecipesCache.length === 0){
-    const { data } = await sb.from('recipes').select('id, name, prep_minutes, cook_minutes').order('name');
-    allRecipesCache = data || [];
+  if (allRecipesFullCache.length === 0){
+    const { data } = await sb.from('recipes').select('id, name, prep_minutes, cook_minutes, tags').order('name');
+    allRecipesFullCache = data || [];
   }
-  if (allRecipesCache.length === 0) return;
+  if (allRecipesFullCache.length === 0) return;
 
   const days = nextSevenDays();
   days.forEach(d => {
     MEAL_SLOTS.forEach(slot => {
       const key = `${d.iso}_${slot}`;
       if (mealPlan[key]) return; // don't overwrite what's already planned
-      const recipe = allRecipesCache[Math.floor(Math.random() * allRecipesCache.length)];
+
+      // Prefer recipes tagged for this meal slot; fall back to anything
+      // if nothing's tagged that way yet, so this never comes up empty.
+      const tagged = allRecipesFullCache.filter(r => (r.tags || []).includes(slot));
+      const pool = tagged.length > 0 ? tagged : allRecipesFullCache;
+      const recipe = pool[Math.floor(Math.random() * pool.length)];
+
       mealPlan[key] = {
         recipeId: recipe.id,
         recipeName: recipe.name,
