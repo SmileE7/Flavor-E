@@ -288,6 +288,19 @@
     font-size:10px; background:var(--parchment-deep); color:#8a8172;
     padding:2px 8px; border-radius:10px; font-family:'JetBrains Mono', monospace;
   }
+  .fav-btn{
+    position:absolute; top:12px; right:12px; background:rgba(255,255,255,0.9);
+    border:none; border-radius:50%; width:30px; height:30px; font-size:15px;
+    cursor:pointer; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 2px 6px rgba(0,0,0,0.1);
+  }
+  .grid-card{position:relative;}
+  .fav-btn-detail{
+    background:none; border:1.5px solid var(--chili); border-radius:20px;
+    padding:6px 14px; font-size:13px; font-weight:600; color:var(--chili);
+    cursor:pointer; margin-left:12px;
+  }
+  .fav-btn-detail.active{background:var(--chili); color:#fff;}
 
   /* ---------- HOUSEHOLD SUMMARY BAR (compact, on recipe pages) ---------- */
   .household-summary-bar{
@@ -423,7 +436,7 @@
   <div class="nav-item" id="navRecipes" onclick="showListView('navRecipes')">🍝 Recipes</div>
   <div class="nav-item" id="navShopping" onclick="showShoppingView('navShopping')">🛒 Shopping</div>
   <div class="nav-item">🥣 Sauces</div>
-  <div class="nav-item">❤️ Favorites</div>
+  <div class="nav-item" id="navFavorites" onclick="showFavoritesView('navFavorites')">❤️ Favorites</div>
   <div class="nav-item">📖 Cookbook</div>
   <div class="nav-item">⚙ Settings</div>
 </div>
@@ -541,7 +554,8 @@
 
   <div id="recipeDetailView" style="display:none;">
     <span class="back-link" onclick="showListView('navRecipes')">← Back to Recipes</span>
-    <h1 class="page-title" id="recipeTitle">Loading…</h1>
+    <h1 class="page-title" id="recipeTitle" style="display:inline-block;">Loading…</h1>
+    <button class="fav-btn-detail" id="favBtnDetail" onclick="toggleFavorite(currentRecipeId)">🤍 Favorite</button>
     <div class="subtitle" id="recipeSubtitle"></div>
 
     <div id="loadingMsg" style="color:#8a8172; font-size:13px;">Fetching recipe from Supabase…</div>
@@ -581,9 +595,7 @@
         <span class="stat">recipe_steps</span> + <span class="stat">recipe_videos</span> — for the
         recipe_id shown below.
         <br><br>
-        Photo tile uploads a real image in-browser now — click it and try a photo of your own. In the live version
-        it'll push to Supabase Storage and save the URL to <span class="stat">recipes.photo_url</span>, the same
-        pattern as your invoice-files bucket.
+        Every recipe now displays a picture automatically. Clicking the photo lets you replace it with your own finished-dish image. The app uploads it to the <span class="stat">recipe-photos</span> Supabase Storage bucket and saves the permanent URL to <span class="stat">recipes.photo_url</span>.
       </div>
     </div>
   </div>
@@ -652,6 +664,33 @@ function detectVideoPlatform(url){
   return { platform: null };
 }
 
+
+// ---- Recipe image helpers ----
+// Prefer a permanent Supabase photo_url. If a recipe does not have one yet,
+// use a stable, recipe-specific food image so every card has visual coverage.
+function stableImageSeed(value='recipe'){
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) hash = ((hash << 5) - hash) + value.charCodeAt(i) | 0;
+  return Math.abs(hash || 1);
+}
+
+function fallbackRecipePhoto(recipe){
+  const name = recipe?.name || 'prepared food';
+  const seed = stableImageSeed(String(recipe?.id || name));
+  const query = encodeURIComponent(`${name}, plated food, recipe`);
+  return `https://loremflickr.com/900/650/${query}?lock=${seed}`;
+}
+
+function recipePhoto(recipe){
+  return recipe?.photo_url || fallbackRecipePhoto(recipe);
+}
+
+function recipeImgTag(recipe, className=''){
+  const src = recipePhoto(recipe);
+  const fallback = 'https://loremflickr.com/900/650/home-cooked-food?lock=8421';
+  return `<img ${className ? `class="${className}"` : ''} src="${src}" alt="${recipe?.name || 'Recipe'}" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${fallback}'">`;
+}
+
 // ---- Household & portion scaling ----
 // Reference adult = 2000 kcal/day, the standard FDA nutrition-label baseline.
 // Each household member's calorie need (from published USDA guidelines) is
@@ -661,6 +700,7 @@ const REFERENCE_ADULT_CALORIES = 2000;
 let nutritionTable = [];
 let household = [];
 let currentRecipeData = null;
+let currentRecipeId = null;
 let scaleEnabled = false;
 
 async function loadNutritionGuidelines(){
@@ -861,6 +901,13 @@ async function loadRecipeById(id){
 
 function renderRecipe(r){
   document.getElementById('recipeTitle').textContent = r.name;
+  currentRecipeId = r.id;
+  renderFavoriteButtonOnDetail();
+
+  // Always show a recipe picture. Permanent photo_url wins; otherwise a
+  // stable recipe-specific food image is used until a household photo is saved.
+  const photoTile = document.getElementById('photoTile');
+  photoTile.innerHTML = `${recipeImgTag(r)}<input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
   const flag = r.countries?.flag_emoji ? r.countries.flag_emoji + ' ' : '';
   document.getElementById('recipeSubtitle').textContent = `${flag}${r.countries?.name ?? ''}`;
 
@@ -963,6 +1010,7 @@ function showListView(navId){
   if (navId) document.getElementById(navId).classList.add('active');
   hideAllViews();
   document.getElementById('recipeListView').style.display = 'block';
+  showFavoritesOnly = false;
   loadRecipeList();
 }
 
@@ -989,6 +1037,32 @@ function showDetailView(){
 
 let allRecipesFullCache = [];
 let activeTagFilters = new Set();
+let favoriteIds = new Set();
+let showFavoritesOnly = false;
+
+function renderFavoriteButtonOnDetail(){
+  const btn = document.getElementById('favBtnDetail');
+  if (!btn || !currentRecipeId) return;
+  const isFav = favoriteIds.has(currentRecipeId);
+  btn.textContent = isFav ? '❤️ Favorited' : '🤍 Favorite';
+  btn.classList.toggle('active', isFav);
+}
+
+function toggleFavorite(id){
+  if (favoriteIds.has(id)) favoriteIds.delete(id);
+  else favoriteIds.add(id);
+  renderRecipeGrid();
+  renderFavoriteButtonOnDetail();
+}
+
+function showFavoritesView(navId){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if (navId) document.getElementById(navId).classList.add('active');
+  hideAllViews();
+  document.getElementById('recipeListView').style.display = 'block';
+  showFavoritesOnly = true;
+  loadRecipeList();
+}
 
 async function loadRecipeList(){
   const grid = document.getElementById('recipeGrid');
@@ -1025,18 +1099,27 @@ function toggleTagFilter(tag){
 
 function renderRecipeGrid(){
   const grid = document.getElementById('recipeGrid');
-  const filtered = activeTagFilters.size === 0
-    ? allRecipesFullCache
-    : allRecipesFullCache.filter(r => [...activeTagFilters].every(t => (r.tags || []).includes(t)));
+  document.querySelector('#recipeListView .page-title').textContent = showFavoritesOnly ? 'Favorites' : 'Recipes';
+  document.querySelector('#recipeListView .subtitle').textContent = showFavoritesOnly
+    ? 'Recipes you have hearted'
+    : 'Everything currently in your Flavor-E database';
+
+  let filtered = showFavoritesOnly ? allRecipesFullCache.filter(r => favoriteIds.has(r.id)) : allRecipesFullCache;
+  filtered = activeTagFilters.size === 0
+    ? filtered
+    : filtered.filter(r => [...activeTagFilters].every(t => (r.tags || []).includes(t)));
 
   if (filtered.length === 0){
-    grid.innerHTML = `<div class="empty-state">No recipes match those filters.</div>`;
+    grid.innerHTML = showFavoritesOnly
+      ? `<div class="empty-state">No favorites yet — click the heart on any recipe to add it here.</div>`
+      : `<div class="empty-state">No recipes match those filters.</div>`;
     return;
   }
 
   grid.innerHTML = filtered.map(r => `
     <div class="grid-card" onclick="openRecipe('${r.id}')">
-      <div class="g-photo">${r.photo_url ? `<img src="${r.photo_url}" alt="${r.name}">` : '🍽️'}</div>
+      <button class="fav-btn" onclick="event.stopPropagation(); toggleFavorite('${r.id}')">${favoriteIds.has(r.id) ? '❤️' : '🤍'}</button>
+      <div class="g-photo">${recipeImgTag(r)}</div>
       <div class="g-name">${r.name}</div>
       <div class="g-sub">${r.countries?.flag_emoji ?? ''} ${r.countries?.name ?? ''}</div>
       <div class="g-stats">
@@ -1148,7 +1231,11 @@ async function surpriseMeWeek(){
       // if nothing's tagged that way yet, so this never comes up empty.
       const tagged = allRecipesFullCache.filter(r => (r.tags || []).includes(slot));
       const pool = tagged.length > 0 ? tagged : allRecipesFullCache;
-      const recipe = pool[Math.floor(Math.random() * pool.length)];
+
+      // Weight favorites 3x so they show up more often without ever
+      // excluding non-favorites entirely.
+      const weightedPool = pool.flatMap(r => favoriteIds.has(r.id) ? [r, r, r] : [r]);
+      const recipe = weightedPool[Math.floor(Math.random() * weightedPool.length)];
 
       mealPlan[key] = {
         recipeId: recipe.id,
@@ -1168,6 +1255,7 @@ let lastShoppingItems = [];
 let storePrices = {}; // { storeId: { "name|unit": price } }
 let selectedStoreId = null;
 let lastStoreResults = [];
+let loggedPriceCache = {}; // { ingredientName: averagePrice } — from real logged store_prices data
 
 async function renderShoppingList(){
   const box = document.getElementById('shoppingList');
@@ -1239,13 +1327,15 @@ async function renderShoppingList(){
     <div class="t-block">Estimated total<span class="stat">$${totalCost.toFixed(2)}</span></div>
     <div style="font-size:11px; color:#8a8172; margin-top:4px;">
       From each recipe's stored cost_per_serving × servings needed — not a live store price.
-    </div>`;
+    </div>
+    <div id="loggedPriceNote" style="margin-top:8px;"></div>`;
   lastEstimatedTotal = totalCost;
 
   // Merged ingredient checklist
   const items = Object.values(aggregate).sort((a,b) => a.name.localeCompare(b.name));
   lastShoppingItems = items;
   if (selectedStoreId) renderPricingPanel(); // refresh in case it rendered before this data arrived
+  renderLoggedPriceNote(items);
   if (items.length === 0){
     box.innerHTML = `<div class="empty-state">No ingredients found for your planned meals.</div>`;
     return;
@@ -1262,6 +1352,42 @@ async function renderShoppingList(){
         <span class="i-amount">${displayAmt}${it.unit ? ' ' + it.unit : ''}</span>
       </div>`;
   }).join('');
+}
+
+async function renderLoggedPriceNote(items){
+  const note = document.getElementById('loggedPriceNote');
+  if (!note || items.length === 0) return;
+
+  const names = items.map(i => i.name);
+  const { data, error } = await sb
+    .from('store_prices')
+    .select('price, ingredients(canonical_name)')
+    .in('ingredients.canonical_name', names);
+
+  if (error || !data || data.length === 0){
+    note.innerHTML = '';
+    return;
+  }
+
+  // Average logged price per ingredient (across whichever stores you've logged at)
+  const byIngredient = {};
+  data.forEach(row => {
+    const name = row.ingredients?.canonical_name;
+    if (!name) return;
+    (byIngredient[name] = byIngredient[name] || []).push(row.price);
+  });
+  const matchedNames = Object.keys(byIngredient);
+  if (matchedNames.length === 0){ note.innerHTML = ''; return; }
+
+  const loggedTotal = matchedNames.reduce((sum, name) => {
+    const prices = byIngredient[name];
+    return sum + prices.reduce((a,b) => a+b, 0) / prices.length;
+  }, 0);
+
+  note.innerHTML = `
+    <div style="font-size:12px; color:var(--sage); font-weight:600;">
+      📋 You've logged real prices for ${matchedNames.length} of ${items.length} ingredients here — averaging $${loggedTotal.toFixed(2)} for just those items.
+    </div>`;
 }
 
 function toggleShoppingItem(key){
@@ -1490,7 +1616,8 @@ function renderPricingPanel(){
           <div class="price-row" data-key="${key}">
             <span>${it.name}${isFlagged ? ' ⚠️' : ''}</span>
             <input type="number" step="0.01" min="0" placeholder="$" value="${val}"
-                   oninput="updateStorePrice('${key}', this.value)">
+                   oninput="updateStorePrice('${key}', this.value)"
+                   onchange="persistStorePrice('${it.name.replace(/'/g,"")}', '${(it.unit||'').replace(/'/g,"")}', this.value)">
           </div>`;
       }).join('')}
       <div id="loggedTotal" style="margin-top:10px; font-size:13px; font-weight:600;"></div>
@@ -1501,6 +1628,26 @@ function renderPricingPanel(){
 function updateStorePrice(key, val){
   storePrices[selectedStoreId][key] = parseFloat(val) || 0;
   updateLoggedTotal();
+}
+
+async function persistStorePrice(ingredientName, unit, val, observedDate){
+  const price = parseFloat(val);
+  if (!price || price <= 0 || !selectedStoreId) return;
+
+  const { data: ing } = await sb.from('ingredients').select('id').eq('canonical_name', ingredientName).single();
+  if (!ing) return;
+
+  const insert = {
+    store_id: selectedStoreId,
+    ingredient_id: ing.id,
+    price,
+    unit: unit || 'each',
+  };
+  if (observedDate) insert.observed_at = observedDate;
+
+  const { error } = await sb.from('store_prices').insert(insert);
+  if (error) console.warn('Flavor-E: could not save price —', error.message);
+  else loggedPriceCache = {}; // invalidate cache so the next shopping list render picks up the new price
 }
 
 // ---- Receipt scanning (Tesseract.js OCR, same approach as Popcorn Beauty's invoice scanner) ----
@@ -1583,23 +1730,35 @@ function renderReceiptReview(date){
           <span class="r-price">$${li.price.toFixed(2)}</span>
         </div>
       `).join('')}
-      <button class="btn btn-saffron" style="margin-top:10px; padding:8px 16px;" onclick="applyReceiptPrices()">Apply prices</button>
+      <button class="btn btn-saffron" style="margin-top:10px; padding:8px 16px;" onclick="applyReceiptPrices('${date || ''}')">Apply prices</button>
     </div>`;
 }
 
-function applyReceiptPrices(){
+function applyReceiptPrices(receiptDate){
   let applied = 0;
+  const isoDate = parseReceiptDateToISO(receiptDate);
   parsedReceiptLines.forEach((li, i) => {
     const sel = document.getElementById(`receiptMatch${i}`);
     if (sel && sel.value){
+      const [name, unit] = sel.value.split('|');
       storePrices[selectedStoreId][sel.value] = li.price;
+      persistStorePrice(name, unit, li.price, isoDate);
       applied++;
     }
   });
   parsedReceiptLines = [];
   renderPricingPanel();
   document.getElementById('scanStatus').innerHTML =
-    `<div class="scan-status">Applied ${applied} price(s) from your receipt.</div>`;
+    `<div class="scan-status">Applied and saved ${applied} price(s) from your receipt.</div>`;
+}
+
+function parseReceiptDateToISO(dateStr){
+  if (!dateStr) return null;
+  const m = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (!m) return null;
+  let [, mo, day, yr] = m;
+  if (yr.length === 2) yr = '20' + yr;
+  return `${yr}-${mo.padStart(2,'0')}-${day.padStart(2,'0')}`;
 }
 
 function updateLoggedTotal(){
@@ -1617,15 +1776,45 @@ renderHousehold();
 // Photo upload — prototype shows it in-browser only (in-memory).
 // Real version uploads to Supabase Storage and saves the returned URL
 // to recipes.photo_url, same pattern as your invoice-files bucket.
-function handlePhotoUpload(event){
+async function handlePhotoUpload(event){
   const file = event.target.files[0];
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = e=>{
-    const tile = document.getElementById('photoTile');
-    tile.innerHTML = `<img src="${e.target.result}" alt="Kimchi Jjigae"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
-  };
-  reader.readAsDataURL(file);
+  if (!file || !currentRecipeId) return;
+
+  const tile = document.getElementById('photoTile');
+  const previous = tile.innerHTML;
+  const localPreview = URL.createObjectURL(file);
+  tile.innerHTML = `<img src="${localPreview}" alt="Recipe preview"><div class="upload-hint" style="position:absolute;bottom:6px;left:6px;background:rgba(27,42,65,.82);color:#fff;border-radius:4px;padding:4px 7px;">Uploading…</div>`;
+
+  try {
+    const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]+/g, '-');
+    const path = `${currentRecipeId}/${Date.now()}-${safeName}`;
+    const { error: uploadError } = await sb.storage
+      .from('recipe-photos')
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (uploadError) throw uploadError;
+
+    const { data: publicData } = sb.storage.from('recipe-photos').getPublicUrl(path);
+    const publicUrl = publicData?.publicUrl;
+    if (!publicUrl) throw new Error('No public image URL returned.');
+
+    const { error: updateError } = await sb
+      .from('recipes')
+      .update({ photo_url: publicUrl })
+      .eq('id', currentRecipeId);
+    if (updateError) throw updateError;
+
+    if (currentRecipeData) currentRecipeData.photo_url = publicUrl;
+    allRecipesFullCache = allRecipesFullCache.map(r => r.id === currentRecipeId ? { ...r, photo_url: publicUrl } : r);
+    allRecipesCache = allRecipesCache.map(r => r.id === currentRecipeId ? { ...r, photo_url: publicUrl } : r);
+    tile.innerHTML = `<img src="${publicUrl}" alt="${currentRecipeData?.name || 'Recipe'}"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
+    URL.revokeObjectURL(localPreview);
+  } catch (error) {
+    console.warn('Permanent recipe photo upload failed:', error);
+    // Keep the local preview visible so the feature is still useful in the
+    // prototype, and explain the one-time Supabase setup requirement.
+    tile.innerHTML = `<img src="${localPreview}" alt="Recipe preview"><input type="file" accept="image/*" id="photoInput" onchange="handlePhotoUpload(event)">`;
+    alert('The picture is showing for this session, but permanent upload needs a public Supabase Storage bucket named “recipe-photos” plus insert/update policies.');
+  }
 }
 
 let currentStep = 0;
