@@ -201,6 +201,46 @@
     font-size:12.5px; color:#8a8172; margin-top:30px; border-top:1px solid var(--paper-line);
     padding-top:14px; line-height:1.6;
   }
+
+  /* ---------- HOUSEHOLD PANEL ---------- */
+  .household-card{
+    background:#fff; border:1px solid var(--paper-line); border-radius:10px;
+    padding:24px 26px; margin-bottom:24px;
+  }
+  .household-card h2{
+    font-family:'Fraunces', serif; font-weight:700; font-size:19px; margin:0 0 4px 0;
+  }
+  .household-sub{color:#6b6558; font-size:13px; margin-bottom:16px; line-height:1.5;}
+  .member-row{
+    display:flex; align-items:center; gap:10px; padding:8px 0;
+    border-bottom:1px dashed var(--paper-line); font-size:14px;
+  }
+  .member-row .m-name{font-weight:600; min-width:110px;}
+  .member-row .m-detail{color:#8a8172; font-size:12.5px;}
+  .member-row .m-remove{
+    margin-left:auto; background:none; border:none; color:var(--chili);
+    cursor:pointer; font-size:12px; font-weight:600;
+  }
+  .member-form{
+    display:grid; grid-template-columns: 1.3fr 1fr 0.8fr 0.7fr 1fr auto; gap:8px;
+    margin-top:14px; align-items:end;
+  }
+  .member-form label{font-size:10.5px; color:#8a8172; text-transform:uppercase; letter-spacing:0.4px; display:block; margin-bottom:4px;}
+  .member-form input, .member-form select{
+    width:100%; padding:8px 9px; border:1px solid var(--paper-line); border-radius:5px;
+    font-family:'Work Sans',sans-serif; font-size:13px; background:var(--parchment);
+  }
+  .household-totals{
+    display:flex; gap:24px; flex-wrap:wrap; margin-top:18px; padding-top:16px;
+    border-top:1px solid var(--paper-line);
+  }
+  .household-totals .t-block{font-size:12px; color:#6b6558;}
+  .household-totals .t-block .stat{display:block; font-size:17px; color:var(--charcoal); margin-top:2px;}
+  .scale-toggle-row{
+    display:flex; align-items:center; gap:10px; margin-top:16px;
+    padding:12px 14px; background:var(--parchment-deep); border-radius:8px;
+  }
+  .scale-toggle-row label{font-size:13.5px; font-weight:500; cursor:pointer; display:flex; align-items:center; gap:8px;}
 </style>
 </head>
 <body>
@@ -224,6 +264,59 @@
   <div class="subtitle" id="recipeSubtitle"></div>
 
   <div id="loadingMsg" style="color:#8a8172; font-size:13px;">Fetching recipe from Supabase…</div>
+
+  <div class="household-card">
+    <h2>🏡 Household & Portions</h2>
+    <div class="household-sub">
+      Add each person you're cooking for. Kids scale by published USDA age/sex/activity guidelines —
+      not by weight — so a 6-year-old's portion is sized sensibly without anyone guessing or tracking numbers.
+    </div>
+
+    <div id="memberList"></div>
+
+    <div class="member-form">
+      <div>
+        <label>Name</label>
+        <input type="text" id="mName" placeholder="Jonas Jr.">
+      </div>
+      <div>
+        <label>Role</label>
+        <select id="mRole" onchange="toggleAgeField()">
+          <option value="adult">Adult</option>
+          <option value="child">Child</option>
+        </select>
+      </div>
+      <div>
+        <label>Sex</label>
+        <select id="mSex">
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+        </select>
+      </div>
+      <div id="ageField">
+        <label>Age</label>
+        <input type="number" id="mAge" min="2" max="99" placeholder="8">
+      </div>
+      <div>
+        <label>Activity</label>
+        <select id="mActivity">
+          <option value="sedentary">Sedentary</option>
+          <option value="moderate" selected>Moderate</option>
+          <option value="active">Active</option>
+        </select>
+      </div>
+      <button class="btn btn-saffron" style="padding:9px 16px;" onclick="addMember()">+ Add</button>
+    </div>
+
+    <div class="household-totals" id="householdTotals"></div>
+
+    <div class="scale-toggle-row">
+      <label>
+        <input type="checkbox" id="scaleToggle" onchange="onScaleToggle()">
+        Scale this recipe's ingredients for my household
+      </label>
+    </div>
+  </div>
 
   <div class="recipe-card" id="recipeCard" style="display:none;">
     <div class="recipe-header">
@@ -291,9 +384,14 @@ const FRACTIONS = {0.25:'1/4', 0.33:'1/3', 0.5:'1/2', 0.67:'2/3', 0.75:'3/4'};
 let stepsByEquip = {};
 let activeEquip = null;
 
-function fmtAmount(ri){
+function fmtAmount(ri, scale = 1){
   if (ri.amount == null) return '';
-  const amt = FRACTIONS[ri.amount] ?? String(ri.amount);
+  const raw = ri.amount * scale;
+  // Round sensibly: discrete items (cloves, blocks, cans, stalks) to nearest 0.5,
+  // liquids/spoons to nearest 0.25 so it maps to a real fraction most of the time.
+  const discrete = ['clove','block','can','stalk'].includes(ri.unit);
+  const rounded = discrete ? Math.round(raw*2)/2 : Math.round(raw*4)/4;
+  const amt = FRACTIONS[rounded] ?? (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2));
   return ri.unit ? `${amt} ${ri.unit}` : amt;
 }
 
@@ -301,6 +399,149 @@ function starRating(difficulty){
   const d = difficulty || 0;
   return '★'.repeat(d) + '☆'.repeat(5 - d);
 }
+
+// ---- Household & portion scaling ----
+// Reference adult = 2000 kcal/day, the standard FDA nutrition-label baseline.
+// Each household member's calorie need (from published USDA guidelines) is
+// expressed as a fraction of that reference — that fraction is their
+// "adult-equivalent portion" for scaling recipes and grocery amounts.
+const REFERENCE_ADULT_CALORIES = 2000;
+let nutritionTable = [];
+let household = [];
+let currentRecipeData = null;
+let scaleEnabled = false;
+
+async function loadNutritionGuidelines(){
+  const { data, error } = await sb.from('nutrition_guidelines').select('*');
+  if (error){
+    console.warn('Flavor-E: could not load nutrition_guidelines —', error.message,
+      '\nRun schema_household.sql in the SQL Editor if you haven\u2019t yet.');
+    return;
+  }
+  nutritionTable = data;
+}
+
+function toggleAgeField(){
+  document.getElementById('ageField').style.display =
+    document.getElementById('mRole').value === 'adult' ? 'none' : 'block';
+}
+
+function lookupGuideline(member){
+  const activity = member.activity;
+  if (member.role === 'child' && member.age <= 3){
+    return nutritionTable.find(g => g.sex === 'child' && member.age >= g.age_min && member.age <= g.age_max && g.activity_level === activity);
+  }
+  const age = member.age ?? 25; // default adult reference age if not given
+  return nutritionTable.find(g => g.sex === member.sex && age >= g.age_min && age <= g.age_max && g.activity_level === activity);
+}
+
+function addMember(){
+  const name = document.getElementById('mName').value.trim() || 'Household member';
+  const role = document.getElementById('mRole').value;
+  const sex = document.getElementById('mSex').value;
+  const ageInput = document.getElementById('mAge').value;
+  const age = role === 'child' ? parseInt(ageInput || '8', 10) : (ageInput ? parseInt(ageInput,10) : null);
+  const activity = document.getElementById('mActivity').value;
+
+  if (role === 'child' && (!ageInput || age < 2 || age > 18)){
+    alert('Please enter a child\u2019s age between 2 and 18.');
+    return;
+  }
+
+  household.push({ name, role, sex, age, activity });
+  document.getElementById('mName').value = '';
+  document.getElementById('mAge').value = '';
+  renderHousehold();
+}
+
+function removeMember(i){
+  household.splice(i, 1);
+  renderHousehold();
+}
+
+function renderHousehold(){
+  const list = document.getElementById('memberList');
+  if (household.length === 0){
+    list.innerHTML = `<div style="color:#a39d8f; font-size:13px; padding:6px 0;">No one added yet — add each person below.</div>`;
+  } else {
+    list.innerHTML = household.map((m,i)=>{
+      const g = lookupGuideline(m);
+      const detail = g ? `~${g.calories} kcal · ${g.protein_rda_g}g protein` : 'no guideline match';
+      return `
+        <div class="member-row">
+          <span class="m-name">${m.name}</span>
+          <span class="m-detail">${m.role === 'child' ? m.age + 'y ' : ''}${m.sex} · ${m.activity} · ${detail}</span>
+          <button class="m-remove" onclick="removeMember(${i})">Remove</button>
+        </div>`;
+    }).join('');
+  }
+
+  // Totals
+  let totalCalories = 0, totalProtein = 0, totalAdultEquiv = 0;
+  household.forEach(m=>{
+    const g = lookupGuideline(m);
+    if (!g) return;
+    totalCalories += g.calories;
+    totalProtein += g.protein_rda_g;
+    totalAdultEquiv += g.calories / REFERENCE_ADULT_CALORIES;
+  });
+
+  document.getElementById('householdTotals').innerHTML = household.length ? `
+    <div class="t-block">Household size<span class="stat">${household.length}</span></div>
+    <div class="t-block">Combined daily calories<span class="stat">${totalCalories.toLocaleString()}</span></div>
+    <div class="t-block">Combined daily protein target<span class="stat">${totalProtein}g</span></div>
+    <div class="t-block">Adult-equivalent portions<span class="stat">${totalAdultEquiv.toFixed(1)}</span></div>
+  ` : '';
+
+  if (scaleEnabled) renderIngredients();
+}
+
+function onScaleToggle(){
+  scaleEnabled = document.getElementById('scaleToggle').checked;
+  renderIngredients();
+}
+
+function currentPortionScale(){
+  if (!scaleEnabled || !currentRecipeData || household.length === 0) return 1;
+  let totalAdultEquiv = 0;
+  household.forEach(m=>{
+    const g = lookupGuideline(m);
+    if (g) totalAdultEquiv += g.calories / REFERENCE_ADULT_CALORIES;
+  });
+  const baseServings = currentRecipeData.servings_default || 4;
+  return totalAdultEquiv / baseServings;
+}
+
+function renderIngredients(){
+  if (!currentRecipeData) return;
+  const r = currentRecipeData;
+  const scale = currentPortionScale();
+
+  const byGroup = {};
+  (r.recipe_ingredients || []).forEach(ri=>{
+    const g = ri.group_label || 'Other';
+    (byGroup[g] = byGroup[g] || []).push(ri);
+  });
+  const groupsInOrder = [...GROUP_ORDER.filter(g=>byGroup[g]), ...Object.keys(byGroup).filter(g=>!GROUP_ORDER.includes(g))];
+  document.getElementById('ingredientGroups').innerHTML = groupsInOrder.map(g=>`
+    <div class="ingredient-group">
+      <h4>${g === 'Optional' ? 'Optional substitutions' : g}</h4>
+      ${byGroup[g].map(ri=>`
+        <div class="ingredient-row">
+          <input type="checkbox">
+          <span>${ri.ingredients?.canonical_name ?? '?'}${ri.substitution_note ? ` <em>(${ri.substitution_note})</em>` : ''}</span>
+          <span class="amount">${fmtAmount(ri, scale)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+  document.querySelectorAll('.ingredient-row input[type=checkbox]').forEach(cb=>{
+    cb.addEventListener('change', e=>{
+      e.target.closest('.ingredient-row').classList.toggle('checked', e.target.checked);
+    });
+  });
+}
+
 
 async function loadRecipe(name){
   const { data, error } = await sb
@@ -355,30 +596,9 @@ function renderRecipe(r){
     });
   });
 
-  // ---- Ingredients, grouped ----
-  const byGroup = {};
-  (r.recipe_ingredients || []).forEach(ri=>{
-    const g = ri.group_label || 'Other';
-    (byGroup[g] = byGroup[g] || []).push(ri);
-  });
-  const groupsInOrder = [...GROUP_ORDER.filter(g=>byGroup[g]), ...Object.keys(byGroup).filter(g=>!GROUP_ORDER.includes(g))];
-  document.getElementById('ingredientGroups').innerHTML = groupsInOrder.map(g=>`
-    <div class="ingredient-group">
-      <h4>${g === 'Optional' ? 'Optional substitutions' : g}</h4>
-      ${byGroup[g].map(ri=>`
-        <div class="ingredient-row">
-          <input type="checkbox">
-          <span>${ri.ingredients?.canonical_name ?? '?'}${ri.substitution_note ? ` <em>(${ri.substitution_note})</em>` : ''}</span>
-          <span class="amount">${fmtAmount(ri)}</span>
-        </div>
-      `).join('')}
-    </div>
-  `).join('');
-  document.querySelectorAll('.ingredient-row input[type=checkbox]').forEach(cb=>{
-    cb.addEventListener('change', e=>{
-      e.target.closest('.ingredient-row').classList.toggle('checked', e.target.checked);
-    });
-  });
+  // ---- Ingredients, grouped (scale-aware) ----
+  currentRecipeData = r;
+  renderIngredients();
 
   // ---- Steps, grouped by equipment ----
   const equipNameById = {};
@@ -412,6 +632,8 @@ function renderRecipe(r){
 }
 
 loadRecipe('Kimchi Jjigae');
+loadNutritionGuidelines();
+renderHousehold();
 
 // Photo upload — prototype shows it in-browser only (in-memory).
 // Real version uploads to Supabase Storage and saves the returned URL
